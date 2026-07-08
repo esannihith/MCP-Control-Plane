@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:canimcp.dev)",
+      "Bash(awk '/^```mermaid$/{f=1;n++;next} /^```/{f=0} f{print > \\(\"diag\" n \".mmd\"\\)}' \"c:/Users/esann/Desktop/control-plane/README.md\")",
+      "Bash(npm --version)",
+      "Bash(git --version)",
+      "Bash(npm init *)",
+      "Bash(npm pkg *)",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\(JSON.stringify\\({deps:p.dependencies,dev:p.devDependencies},null,1\\)\\)\")",
+      "Bash(npx vitest *)",
+      "Bash(cp \"C:/Users/esann/AppData/Local/Temp/claude/c--Users-esann-Desktop-control-plane/d14730fb-e73b-415b-958e-ccdf3cc3097e/scratchpad/smoke.mjs\" ./smoke.tmp.mjs)",
+      "Bash(node smoke.tmp.mjs)",
+      "Bash(rm smoke.tmp.mjs)",
+      "Bash(curl -s -o /dev/null -w \"no-auth status: %{http_code}\\\\n\" -X POST http://127.0.0.1:8720/mcp -H \"content-type: application/json\" -d '{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{},\"id\":1}')",
+      "Bash(taskkill //F //IM node.exe //FI \"WINDOWTITLE ne *vscode*\")",
+      "Bash(curl -s -m 3 http://127.0.0.1:8720/healthz)",
+      "PowerShell($pid8720 = \\(Get-NetTCPConnection -LocalPort 8720 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1\\).OwningProcess; if \\($pid8720\\) { Stop-Process -Id $pid8720 -Force -Confirm:$false; \"stopped PID $pid8720\" } else { \"nothing listening on 8720\" })",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git -c core.safecrlf=false commit -q -m 'Part 1: gateway spine — streamable HTTP MCP endpoint with API-key auth *)"
+    ]
+  }
+}
