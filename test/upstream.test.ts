@@ -45,7 +45,7 @@ async function startStack(upstreams: { name: string; url: string; bearer?: strin
   });
   {
     const seed = openDb(tempDb);
-    for (const u of upstreams) addUpstream(seed, u.name, u.url, u.bearer);
+    for (const u of upstreams) addUpstream(seed, u.name, u.url, { bearerToken: u.bearer });
     seed.close();
   }
   const app = await buildApp(loadConfig({ dbPath: tempDb, port: 0 }));

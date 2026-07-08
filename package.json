@@ -10,7 +10,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "key": "tsx scripts/key.ts",
-    "upstream": "tsx scripts/upstream.ts"
+    "upstream": "tsx scripts/upstream.ts",
+    "account": "tsx scripts/account.ts"
   },
   "keywords": [],
   "author": "",

@@ -2,20 +2,31 @@ import { loadConfig } from "../src/config.js";
 import { openDb } from "../src/db/index.js";
 import { UpstreamManager } from "../src/upstream/manager.js";
 import { addUpstream, listUpstreams, removeUpstream } from "../src/upstream/registry.js";
+import { Vault } from "../src/vault/index.js";
 
 const args = process.argv.slice(2);
 const command = args[0];
-const db = openDb(loadConfig().dbPath);
+const config = loadConfig();
+const db = openDb(config.dbPath);
+const vault = config.masterKey ? new Vault(config.masterKey) : null;
 
 switch (command) {
   case "add": {
     const [, name, url] = args;
     if (!name || !url) usage("add requires <name> <url>");
     const bearerIndex = args.indexOf("--bearer");
-    const bearer = bearerIndex >= 0 ? args[bearerIndex + 1] : undefined;
-    addUpstream(db, name, url, bearer);
+    let bearer = bearerIndex >= 0 ? args[bearerIndex + 1] : undefined;
+    const oauth = args.includes("--oauth");
+    if (bearer && vault) bearer = vault.encrypt(bearer);
+    else if (bearer) console.warn("WARNING: CP_MASTER_KEY not set — bearer token stored UNENCRYPTED.");
+    addUpstream(db, name, url, { bearerToken: bearer, oauth });
+    if (oauth) {
+      console.log(`Upstream '${name}' registered (${url}, OAuth).`);
+      console.log(`Link an account next: npm run account -- link ${name} --label <who>`);
+      break;
+    }
     console.log(`Upstream '${name}' registered (${url}). Connecting to ingest tools...`);
-    const manager = new UpstreamManager(db);
+    const manager = new UpstreamManager(db, vault);
     await manager.start();
     const status = manager.status().find((s) => s.name === name);
     if (status?.connected) {
@@ -35,7 +46,7 @@ switch (command) {
     }
     for (const u of upstreams) {
       const tools = (db.prepare("SELECT COUNT(*) AS n FROM upstream_tools WHERE upstream_id = ?").get(u.id) as { n: number }).n;
-      console.log(`${u.id}\t${u.name}\t${u.url}\t${u.enabled ? "enabled" : "disabled"}\t${tools} tools${u.bearer_token ? "\t(bearer auth)" : ""}`);
+      console.log(`${u.id}\t${u.name}\t${u.url}\t${u.enabled ? "enabled" : "disabled"}\t${u.auth_mode}\t${tools} tools`);
     }
     break;
   }
@@ -52,6 +63,6 @@ db.close();
 
 function usage(error?: string): never {
   if (error) console.error(`Error: ${error}\n`);
-  console.log("Usage: npm run upstream -- <add|list|remove> [name] [url] [--bearer <token>]");
+  console.log("Usage: npm run upstream -- <add|list|remove> [name] [url] [--bearer <token>] [--oauth]");
   process.exit(error ? 1 : 0);
 }

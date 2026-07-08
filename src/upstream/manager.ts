@@ -3,6 +3,9 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Db } from "../db/index.js";
+import { getDefaultAccount } from "../accounts/index.js";
+import { AccountOAuthProvider } from "../accounts/provider.js";
+import { Vault } from "../vault/index.js";
 import { SERVER_VERSION } from "../version.js";
 import { listUpstreams, refreshUpstreamTools, type ResolvedTool, type UpstreamRow } from "./registry.js";
 
@@ -26,7 +29,10 @@ interface UpstreamConnection {
 export class UpstreamManager {
   private connections = new Map<number, UpstreamConnection>();
 
-  constructor(private db: Db) {}
+  constructor(
+    private db: Db,
+    private vault: Vault | null = null,
+  ) {}
 
   /** Connects all enabled upstreams; failures leave the upstream registered but disconnected. */
   async start(): Promise<void> {
@@ -46,13 +52,7 @@ export class UpstreamManager {
     this.connections.set(row.id, connection);
 
     const client = new Client({ name: "mcp-control-plane", version: SERVER_VERSION });
-    const transport = new StreamableHTTPClientTransport(
-      new URL(row.url),
-      row.bearer_token
-        ? { requestInit: { headers: { Authorization: `Bearer ${row.bearer_token}` } } }
-        : undefined,
-    );
-    await client.connect(transport);
+    await client.connect(this.buildTransport(row));
     client.onclose = () => {
       if (connection.client === client) connection.client = null;
     };
@@ -61,6 +61,41 @@ export class UpstreamManager {
     refreshUpstreamTools(this.db, row, tools);
     connection.client = client;
     return client;
+  }
+
+  private buildTransport(row: UpstreamRow): StreamableHTTPClientTransport {
+    const url = new URL(row.url);
+    switch (row.auth_mode) {
+      case "bearer": {
+        if (!row.bearer_token) throw new Error(`Upstream '${row.name}' is bearer-auth but has no token`);
+        const token =
+          Vault.isEncrypted(row.bearer_token) && this.vault
+            ? this.vault.decrypt(row.bearer_token)
+            : row.bearer_token;
+        return new StreamableHTTPClientTransport(url, {
+          requestInit: { headers: { Authorization: `Bearer ${token}` } },
+        });
+      }
+      case "oauth": {
+        if (!this.vault) {
+          throw new Error(`Upstream '${row.name}' uses OAuth — set CP_MASTER_KEY (npm run key -- master)`);
+        }
+        const account = getDefaultAccount(this.db, row.id);
+        if (!account) {
+          throw new Error(`Upstream '${row.name}' has no linked account — run: npm run account -- link ${row.name}`);
+        }
+        // Headless provider: refreshes silently; anything needing user interaction fails loudly.
+        const provider = new AccountOAuthProvider({
+          db: this.db,
+          vault: this.vault,
+          upstreamId: row.id,
+          accountId: account.id,
+        });
+        return new StreamableHTTPClientTransport(url, { authProvider: provider });
+      }
+      default:
+        return new StreamableHTTPClientTransport(url);
+    }
   }
 
   private async reconnect(upstreamId: number): Promise<Client> {

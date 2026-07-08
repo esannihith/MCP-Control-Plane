@@ -44,6 +44,24 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: 3,
+    // *_enc columns hold Vault ciphertext (v1:...). Pre-existing plaintext
+    // bearer tokens are encrypted in place at app startup once a vault exists.
+    sql: `
+      ALTER TABLE upstreams ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'none';
+      ALTER TABLE upstreams ADD COLUMN oauth_client_info_enc TEXT;
+      UPDATE upstreams SET auth_mode = 'bearer' WHERE bearer_token IS NOT NULL;
+      CREATE TABLE linked_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        upstream_id INTEGER NOT NULL REFERENCES upstreams(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        tokens_enc TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (upstream_id, label)
+      );
+    `,
+  },
 ];
 
 export type Db = Database.Database;

@@ -1,11 +1,14 @@
 import type { Db } from "../db/index.js";
 import { exposedToolName } from "./naming.js";
 
+export type AuthMode = "none" | "bearer" | "oauth";
+
 export interface UpstreamRow {
   id: number;
   name: string;
   url: string;
   bearer_token: string | null;
+  auth_mode: AuthMode;
   enabled: number;
 }
 
@@ -30,15 +33,28 @@ export interface ResolvedTool {
 export function listUpstreams(db: Db, enabledOnly = false): UpstreamRow[] {
   const where = enabledOnly ? "WHERE enabled = 1" : "";
   return db
-    .prepare(`SELECT id, name, url, bearer_token, enabled FROM upstreams ${where} ORDER BY id`)
+    .prepare(`SELECT id, name, url, bearer_token, auth_mode, enabled FROM upstreams ${where} ORDER BY id`)
     .all() as UpstreamRow[];
 }
 
-export function addUpstream(db: Db, name: string, url: string, bearerToken?: string): UpstreamRow {
+export function addUpstream(
+  db: Db,
+  name: string,
+  url: string,
+  options: { bearerToken?: string; oauth?: boolean } = {},
+): UpstreamRow {
+  const authMode: AuthMode = options.oauth ? "oauth" : options.bearerToken ? "bearer" : "none";
   const result = db
-    .prepare("INSERT INTO upstreams (name, url, bearer_token) VALUES (?, ?, ?)")
-    .run(name, url, bearerToken ?? null);
-  return { id: Number(result.lastInsertRowid), name, url, bearer_token: bearerToken ?? null, enabled: 1 };
+    .prepare("INSERT INTO upstreams (name, url, bearer_token, auth_mode) VALUES (?, ?, ?, ?)")
+    .run(name, url, options.bearerToken ?? null, authMode);
+  return {
+    id: Number(result.lastInsertRowid),
+    name,
+    url,
+    bearer_token: options.bearerToken ?? null,
+    auth_mode: authMode,
+    enabled: 1,
+  };
 }
 
 export function removeUpstream(db: Db, name: string): boolean {

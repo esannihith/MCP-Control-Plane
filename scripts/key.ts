@@ -1,8 +1,16 @@
 import { loadConfig } from "../src/config.js";
 import { openDb } from "../src/db/index.js";
 import { createApiKey, listApiKeys, revokeApiKey } from "../src/keys.js";
+import { Vault } from "../src/vault/index.js";
 
 const [command, name] = process.argv.slice(2);
+
+if (command === "master") {
+  console.log(`Generated vault master key. Add this line to your .env:\n\nCP_MASTER_KEY=${Vault.generateKey()}\n`);
+  console.log("Keep it safe: losing it makes stored tokens unrecoverable.");
+  process.exit(0);
+}
+
 const db = openDb(loadConfig().dbPath);
 
 switch (command) {
@@ -36,6 +44,6 @@ db.close();
 
 function usage(error?: string): never {
   if (error) console.error(`Error: ${error}\n`);
-  console.log("Usage: npm run key -- <create|list|revoke> [name]");
+  console.log("Usage: npm run key -- <create|list|revoke|master> [name]");
   process.exit(error ? 1 : 0);
 }

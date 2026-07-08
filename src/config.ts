@@ -9,6 +9,8 @@ export interface Config {
   dbPath: string;
   /** Externally reachable base URL (used later for OAuth metadata and callbacks). */
   publicUrl: string;
+  /** 32-byte vault master key (base64url/base64/hex). Unset → vault features disabled. */
+  masterKey?: string;
 }
 
 export function loadConfig(overrides: Partial<Config> = {}): Config {
@@ -18,5 +20,6 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     host: overrides.host ?? process.env.CP_HOST ?? "127.0.0.1",
     dbPath: overrides.dbPath ?? process.env.CP_DB_PATH ?? "./data/control-plane.db",
     publicUrl: overrides.publicUrl ?? process.env.CP_PUBLIC_URL ?? `http://localhost:${port}`,
+    masterKey: overrides.masterKey ?? process.env.CP_MASTER_KEY,
   };
 }

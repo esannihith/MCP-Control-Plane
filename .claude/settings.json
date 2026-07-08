@@ -21,7 +21,8 @@
       "Bash(git add *)",
       "Bash(git -c core.safecrlf=false commit -q -m 'Part 1: gateway spine — streamable HTTP MCP endpoint with API-key auth *)",
       "PowerShell(foreach \\($port in 8720, 9101, 9102\\) { $p = \\(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1\\).OwningProcess; if \\($p\\) { Stop-Process -Id $p -Force -Confirm:$false; \"stopped $port \\(pid $p\\)\" } })",
-      "Bash(git -c core.safecrlf=false commit -q -m 'Part 2: upstream proxy core — namespaced tool catalog and call routing *)"
+      "Bash(git -c core.safecrlf=false commit -q -m 'Part 2: upstream proxy core — namespaced tool catalog and call routing *)",
+      "Bash(git -c core.safecrlf=false commit -q -m 'Part 3: encrypted vault + upstream OAuth with linked accounts *)"
     ]
   }
 }
