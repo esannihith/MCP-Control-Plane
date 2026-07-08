@@ -62,6 +62,20 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: 4,
+    // Which linked account a client connection (API key) uses per upstream.
+    sql: `
+      CREATE TABLE bindings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        api_key_id INTEGER NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+        upstream_id INTEGER NOT NULL REFERENCES upstreams(id) ON DELETE CASCADE,
+        account_id INTEGER NOT NULL REFERENCES linked_accounts(id) ON DELETE CASCADE,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (api_key_id, upstream_id)
+      );
+    `,
+  },
 ];
 
 export type Db = Database.Database;

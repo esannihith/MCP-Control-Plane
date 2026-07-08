@@ -24,12 +24,44 @@ export interface LinkOptions {
  * listener, stores the resulting tokens in the vault, and verifies the
  * credentials with a fresh connection before reporting success.
  */
+/**
+ * The upstream's DCR registration pins our redirect_uri, so later links must
+ * reuse the port the client was registered with or the AS rejects them.
+ */
+function registeredCallbackPort(db: Db, vault: Vault, upstreamId: number): number | undefined {
+  const row = db.prepare("SELECT oauth_client_info_enc FROM upstreams WHERE id = ?").get(upstreamId) as
+    | { oauth_client_info_enc: string | null }
+    | undefined;
+  if (!row?.oauth_client_info_enc) return undefined;
+  try {
+    const info = JSON.parse(vault.decrypt(row.oauth_client_info_enc)) as { redirect_uris?: string[] };
+    const url = new URL(info.redirect_uris?.[0] ?? "");
+    if (url.hostname === "127.0.0.1" && url.pathname === "/callback") return Number(url.port);
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 export async function linkAccount(db: Db, vault: Vault, upstream: UpstreamRow, options: LinkOptions): Promise<LinkedAccount> {
   const account = upsertAccount(db, upstream.id, options.label);
   const wasLinked = account.linked;
 
+  const preferredPort = options.callbackPort ?? registeredCallbackPort(db, vault, upstream.id) ?? 0;
   const httpServer = createServer();
-  await new Promise<void>((resolve) => httpServer.listen(options.callbackPort ?? 0, "127.0.0.1", resolve));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.once("error", reject);
+      httpServer.listen(preferredPort, "127.0.0.1", resolve);
+    });
+  } catch {
+    // Registered port unavailable: drop the stale client registration and
+    // re-register on a fresh port. Accounts linked under the old client_id
+    // may need re-linking once their refresh tokens stop working.
+    console.warn(`Callback port ${preferredPort} unavailable — re-registering OAuth client for '${upstream.name}'.`);
+    db.prepare("UPDATE upstreams SET oauth_client_info_enc = NULL WHERE id = ?").run(upstream.id);
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+  }
   const { port } = httpServer.address() as AddressInfo;
   const redirectUrl = `http://127.0.0.1:${port}/callback`;
 

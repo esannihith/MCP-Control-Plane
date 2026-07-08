@@ -17,42 +17,53 @@ export interface UpstreamStatus {
 }
 
 interface UpstreamConnection {
-  row: UpstreamRow;
   client: Client | null;
 }
 
 /**
- * Owns the control plane's MCP client connections to upstream servers:
- * connect, ingest tool lists into the registry, proxy calls, and lazily
- * reconnect when an upstream dropped.
+ * Owns the control plane's MCP client connections to upstream servers.
+ * OAuth upstreams get one connection per (upstream, linked account) so
+ * different client bindings against the same vendor run concurrently;
+ * none/bearer upstreams get a single shared connection.
  */
 export class UpstreamManager {
-  private connections = new Map<number, UpstreamConnection>();
+  private connections = new Map<string, UpstreamConnection>();
 
   constructor(
     private db: Db,
     private vault: Vault | null = null,
   ) {}
 
+  private connectionKey(upstreamId: number, accountId?: number): string {
+    return accountId == null ? `${upstreamId}` : `${upstreamId}:${accountId}`;
+  }
+
   /** Connects all enabled upstreams; failures leave the upstream registered but disconnected. */
   async start(): Promise<void> {
     const rows = listUpstreams(this.db, true);
-    await Promise.allSettled(rows.map((row) => this.connect(row)));
+    await Promise.allSettled(
+      rows.map((row) => {
+        if (row.auth_mode !== "oauth") return this.connect(row);
+        // Ingest tools with any linked account; per-binding connections come on demand.
+        const account = getDefaultAccount(this.db, row.id);
+        if (!account) return Promise.reject(new Error(`no linked account for '${row.name}'`));
+        return this.connect(row, account.id);
+      }),
+    );
   }
 
   async stop(): Promise<void> {
-    await Promise.allSettled(
-      [...this.connections.values()].map((connection) => connection.client?.close()),
-    );
+    await Promise.allSettled([...this.connections.values()].map((connection) => connection.client?.close()));
     this.connections.clear();
   }
 
-  private async connect(row: UpstreamRow): Promise<Client> {
-    const connection: UpstreamConnection = this.connections.get(row.id) ?? { row, client: null };
-    this.connections.set(row.id, connection);
+  private async connect(row: UpstreamRow, accountId?: number): Promise<Client> {
+    const key = this.connectionKey(row.id, accountId);
+    const connection: UpstreamConnection = this.connections.get(key) ?? { client: null };
+    this.connections.set(key, connection);
 
     const client = new Client({ name: "mcp-control-plane", version: SERVER_VERSION });
-    await client.connect(this.buildTransport(row));
+    await client.connect(this.buildTransport(row, accountId));
     client.onclose = () => {
       if (connection.client === client) connection.client = null;
     };
@@ -63,7 +74,7 @@ export class UpstreamManager {
     return client;
   }
 
-  private buildTransport(row: UpstreamRow): StreamableHTTPClientTransport {
+  private buildTransport(row: UpstreamRow, accountId?: number): StreamableHTTPClientTransport {
     const url = new URL(row.url);
     switch (row.auth_mode) {
       case "bearer": {
@@ -80,16 +91,15 @@ export class UpstreamManager {
         if (!this.vault) {
           throw new Error(`Upstream '${row.name}' uses OAuth — set CP_MASTER_KEY (npm run key -- master)`);
         }
-        const account = getDefaultAccount(this.db, row.id);
-        if (!account) {
-          throw new Error(`Upstream '${row.name}' has no linked account — run: npm run account -- link ${row.name}`);
+        if (accountId == null) {
+          throw new Error(`Upstream '${row.name}' requires a linked account — run: npm run account -- link ${row.name}`);
         }
         // Headless provider: refreshes silently; anything needing user interaction fails loudly.
         const provider = new AccountOAuthProvider({
           db: this.db,
           vault: this.vault,
           upstreamId: row.id,
-          accountId: account.id,
+          accountId,
         });
         return new StreamableHTTPClientTransport(url, { authProvider: provider });
       }
@@ -98,25 +108,26 @@ export class UpstreamManager {
     }
   }
 
-  private async reconnect(upstreamId: number): Promise<Client> {
+  private async reconnect(upstreamId: number, accountId?: number): Promise<Client> {
     const row = listUpstreams(this.db, true).find((r) => r.id === upstreamId);
     if (!row) throw new Error(`Upstream ${upstreamId} is not registered or is disabled`);
-    const existing = this.connections.get(upstreamId)?.client;
+    const existing = this.connections.get(this.connectionKey(upstreamId, accountId))?.client;
     if (existing) await existing.close().catch(() => {});
-    return this.connect(row);
+    return this.connect(row, accountId);
   }
 
-  async callTool(resolved: ResolvedTool, args: Record<string, unknown>): Promise<CallToolResult> {
+  /** For OAuth upstreams `accountId` selects which linked account's connection to use. */
+  async callTool(resolved: ResolvedTool, args: Record<string, unknown>, accountId?: number): Promise<CallToolResult> {
+    const key = this.connectionKey(resolved.upstreamId, accountId);
     try {
-      const connection = this.connections.get(resolved.upstreamId);
-      const client = connection?.client ?? (await this.reconnect(resolved.upstreamId));
+      const client = this.connections.get(key)?.client ?? (await this.reconnect(resolved.upstreamId, accountId));
       return (await client.callTool({ name: resolved.originalName, arguments: args })) as CallToolResult;
     } catch (error) {
       // A JSON-RPC error means the upstream received and rejected the call — never retry those.
       // Transport-level failures get one reconnect attempt, then degrade to a tool error result.
       if (error instanceof McpError) throw error;
       try {
-        const client = await this.reconnect(resolved.upstreamId);
+        const client = await this.reconnect(resolved.upstreamId, accountId);
         return (await client.callTool({ name: resolved.originalName, arguments: args })) as CallToolResult;
       } catch (retryError) {
         if (retryError instanceof McpError) throw retryError;
@@ -141,12 +152,11 @@ export class UpstreamManager {
           n: number;
         }
       ).n;
-      return {
-        name: row.name,
-        url: row.url,
-        connected: this.connections.get(row.id)?.client != null,
-        toolCount,
-      };
+      const prefix = `${row.id}`;
+      const connected = [...this.connections.entries()].some(
+        ([key, connection]) => (key === prefix || key.startsWith(`${prefix}:`)) && connection.client != null,
+      );
+      return { name: row.name, url: row.url, connected, toolCount };
     });
   }
 }

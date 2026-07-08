@@ -11,6 +11,8 @@ export interface MockOAuthUpstream {
   url: string;
   issuer: string;
   counters: { registrations: number; authorizations: number; codeGrants: number; refreshGrants: number };
+  /** The vendor-side identity the next authorization will be issued for (the "logged-in browser user"). */
+  setNextUser(user: string): void;
   /** Invalidates all outstanding access tokens, forcing clients onto the refresh path. */
   expireAccessTokens(): void;
   close(): Promise<void>;
@@ -25,9 +27,10 @@ export interface MockOAuthUpstream {
 export async function startMockOAuthUpstream(name: string): Promise<MockOAuthUpstream> {
   const counters = { registrations: 0, authorizations: 0, codeGrants: 0, refreshGrants: 0 };
   const clients = new Map<string, { redirect_uris: string[] }>();
-  const codes = new Map<string, { clientId: string; challenge: string; redirectUri: string }>();
-  const accessTokens = new Set<string>();
-  const refreshTokens = new Set<string>();
+  const codes = new Map<string, { clientId: string; challenge: string; redirectUri: string; user: string }>();
+  const accessTokens = new Map<string, string>(); // token -> user
+  const refreshTokens = new Map<string, string>(); // token -> user
+  let nextUser = "user1";
 
   const app = express();
   app.use(express.json());
@@ -79,18 +82,18 @@ export async function startMockOAuthUpstream(name: string): Promise<MockOAuthUps
       return;
     }
     const code = `code_${randomBytes(8).toString("hex")}`;
-    codes.set(code, { clientId: client_id, challenge: code_challenge, redirectUri: redirect_uri });
+    codes.set(code, { clientId: client_id, challenge: code_challenge, redirectUri: redirect_uri, user: nextUser });
     const target = new URL(redirect_uri);
     target.searchParams.set("code", code);
     if (state) target.searchParams.set("state", state);
     res.redirect(target.toString());
   });
 
-  const issueTokens = () => {
+  const issueTokens = (user: string) => {
     const accessToken = `at_${randomBytes(12).toString("hex")}`;
     const refreshToken = `rt_${randomBytes(12).toString("hex")}`;
-    accessTokens.add(accessToken);
-    refreshTokens.add(refreshToken);
+    accessTokens.set(accessToken, user);
+    refreshTokens.set(refreshToken, user);
     return { access_token: accessToken, token_type: "Bearer", expires_in: 3600, refresh_token: refreshToken };
   };
 
@@ -106,16 +109,17 @@ export async function startMockOAuthUpstream(name: string): Promise<MockOAuthUps
       }
       codes.delete(code);
       counters.codeGrants++;
-      res.json(issueTokens());
+      res.json(issueTokens(pending.user));
       return;
     }
     if (grant_type === "refresh_token") {
-      if (!refreshTokens.has(refresh_token)) {
+      const user = refreshTokens.get(refresh_token);
+      if (!user) {
         res.status(400).json({ error: "invalid_grant", error_description: "unknown refresh token" });
         return;
       }
       counters.refreshGrants++;
-      res.json(issueTokens());
+      res.json(issueTokens(user));
       return;
     }
     res.status(400).json({ error: "unsupported_grant_type" });
@@ -123,7 +127,8 @@ export async function startMockOAuthUpstream(name: string): Promise<MockOAuthUps
 
   app.post("/mcp", async (req, res) => {
     const token = req.headers.authorization?.replace(/^Bearer /, "");
-    if (!token || !accessTokens.has(token)) {
+    const user = token ? accessTokens.get(token) : undefined;
+    if (!token || !user) {
       res
         .status(401)
         .set("WWW-Authenticate", `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"`)
@@ -131,8 +136,8 @@ export async function startMockOAuthUpstream(name: string): Promise<MockOAuthUps
       return;
     }
     const server = new McpServer({ name: `mock-oauth-${name}`, version: "0.0.1" });
-    server.registerTool("whoami", { description: "Reports the token used" }, async () => ({
-      content: [{ type: "text", text: `authorized via ${token.slice(0, 6)}...` }],
+    server.registerTool("whoami", { description: "Reports the authorized vendor-side user" }, async () => ({
+      content: [{ type: "text", text: `user:${user}` }],
     }));
     server.registerTool(
       "echo",
@@ -159,6 +164,9 @@ export async function startMockOAuthUpstream(name: string): Promise<MockOAuthUps
     url: `${issuer}/mcp`,
     issuer,
     counters,
+    setNextUser: (user) => {
+      nextUser = user;
+    },
     expireAccessTokens: () => accessTokens.clear(),
     close: () =>
       new Promise((resolve, reject) => {

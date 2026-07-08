@@ -23,13 +23,21 @@ switch (command) {
     }
     const labelIndex = args.indexOf("--label");
     const label = labelIndex >= 0 ? args[labelIndex + 1] : "default";
+    const noOpen = args.includes("--no-open");
     const vault = new Vault(config.masterKey);
+    const existing = listAccounts(db, upstream.id).filter((a) => a.linked);
     console.log(`Linking account '${label}' at upstream '${upstreamName}'...`);
+    if (existing.length > 0) {
+      console.log(
+        `NOTE: ${existing.length} account(s) already linked here. The vendor's consent screen uses your BROWSER session,\n` +
+          "not the label — open the URL below in an incognito/private window to authorize a different account.",
+      );
+    }
     const account = await linkAccount(db, vault, upstream, {
       label,
       openUrl: (url) => {
         console.log(`\nOpen this URL in your browser to authorize:\n\n  ${url}\n`);
-        exec(`start "" "${url}"`); // best-effort browser launch on Windows
+        if (!noOpen) exec(`start "" "${url}"`); // best-effort browser launch on Windows
       },
     });
     console.log(`Linked '${account.label}' (account #${account.id}). Tokens stored encrypted.`);
@@ -75,6 +83,6 @@ db.close();
 
 function usage(error?: string): never {
   if (error) console.error(`Error: ${error}\n`);
-  console.log("Usage: npm run account -- <link|list|unlink> [upstream] [label] [--label <label>]");
+  console.log("Usage: npm run account -- <link|list|unlink> [upstream] [label] [--label <label>] [--no-open]");
   process.exit(error ? 1 : 0);
 }

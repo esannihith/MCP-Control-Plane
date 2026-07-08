@@ -37,6 +37,13 @@ export function listUpstreams(db: Db, enabledOnly = false): UpstreamRow[] {
     .all() as UpstreamRow[];
 }
 
+export function getUpstream(db: Db, id: number): UpstreamRow | null {
+  const row = db
+    .prepare("SELECT id, name, url, bearer_token, auth_mode, enabled FROM upstreams WHERE id = ?")
+    .get(id) as UpstreamRow | undefined;
+  return row ?? null;
+}
+
 export function addUpstream(
   db: Db,
   name: string,
