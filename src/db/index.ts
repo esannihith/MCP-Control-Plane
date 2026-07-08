@@ -20,6 +20,30 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: 2,
+    // bearer_token is plaintext until the encrypted vault lands in Part 3.
+    sql: `
+      CREATE TABLE upstreams (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        url TEXT NOT NULL,
+        bearer_token TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE upstream_tools (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        upstream_id INTEGER NOT NULL REFERENCES upstreams(id) ON DELETE CASCADE,
+        original_name TEXT NOT NULL,
+        exposed_name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        input_schema TEXT NOT NULL,
+        ingested_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (upstream_id, original_name)
+      );
+    `,
+  },
 ];
 
 export type Db = Database.Database;

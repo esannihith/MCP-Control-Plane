@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Db } from "../db/index.js";
 import { verifyApiKey, type Connection } from "../keys.js";
+import type { UpstreamManager } from "../upstream/manager.js";
 import { buildMcpServer } from "./mcpServer.js";
 
 interface GatewaySession {
@@ -36,7 +37,7 @@ function requireApiKey(db: Db) {
   };
 }
 
-export function createGateway(db: Db): Gateway {
+export function createGateway(db: Db, manager: UpstreamManager): Gateway {
   const sessions = new Map<string, GatewaySession>();
   const router = Router();
 
@@ -84,7 +85,7 @@ export function createGateway(db: Db): Gateway {
       if (transport.sessionId) sessions.delete(transport.sessionId);
     };
 
-    const server = buildMcpServer(connection, () => transport.sessionId);
+    const server = buildMcpServer({ db, manager, connection, getSessionId: () => transport.sessionId });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   });

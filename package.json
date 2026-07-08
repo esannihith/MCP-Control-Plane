@@ -9,7 +9,8 @@
     "start": "tsx src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "key": "tsx scripts/key.ts"
+    "key": "tsx scripts/key.ts",
+    "upstream": "tsx scripts/upstream.ts"
   },
   "keywords": [],
   "author": "",

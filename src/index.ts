@@ -2,11 +2,16 @@ import { loadConfig } from "./config.js";
 import { buildApp } from "./app.js";
 
 const config = loadConfig();
-const { app, close } = buildApp(config);
+const { app, manager, close } = await buildApp(config);
 
 const server = app.listen(config.port, config.host, () => {
   console.log(`mcp-control-plane listening on http://${config.host}:${config.port}`);
   console.log(`MCP endpoint: http://${config.host}:${config.port}/mcp`);
+  for (const upstream of manager.status()) {
+    console.log(
+      `upstream '${upstream.name}' (${upstream.url}): ${upstream.connected ? "connected" : "DISCONNECTED"}, ${upstream.toolCount} tools`,
+    );
+  }
 });
 
 async function shutdown(signal: string): Promise<void> {

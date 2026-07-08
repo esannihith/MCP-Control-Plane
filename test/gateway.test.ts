@@ -17,7 +17,7 @@ let running: TestServer | undefined;
 const clients: Client[] = [];
 
 async function startServer(): Promise<TestServer> {
-  const app = buildApp(loadConfig({ dbPath: ":memory:", port: 0 }));
+  const app = await buildApp(loadConfig({ dbPath: ":memory:", port: 0 }));
   const server = await new Promise<Server>((resolve) => {
     const s = app.app.listen(0, "127.0.0.1", () => resolve(s));
   });
