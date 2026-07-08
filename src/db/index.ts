@@ -76,6 +76,43 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: 5,
+    // OAuth 2.1 authorization server toward clients. Each approved grant gets
+    // its own row in api_keys (name 'oauth:...') so bindings/audit reuse the
+    // same connection identity as header API keys; its key_hash is random and
+    // unusable as a bearer key. Token/code values are stored hashed.
+    sql: `
+      CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE TABLE oauth_clients (
+        client_id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE oauth_codes (
+        code_hash TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL,
+        api_key_id INTEGER NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+        code_challenge TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        scopes TEXT NOT NULL DEFAULT '',
+        expires_at INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE oauth_tokens (
+        token_hash TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+        client_id TEXT NOT NULL,
+        api_key_id INTEGER NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+        expires_at INTEGER NOT NULL,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `,
+  },
 ];
 
 export type Db = Database.Database;

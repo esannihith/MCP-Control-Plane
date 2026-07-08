@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "key": "tsx scripts/key.ts",
     "upstream": "tsx scripts/upstream.ts",
-    "account": "tsx scripts/account.ts"
+    "account": "tsx scripts/account.ts",
+    "owner": "tsx scripts/owner.ts"
   },
   "keywords": [],
   "author": "",

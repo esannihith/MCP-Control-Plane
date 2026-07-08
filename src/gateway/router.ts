@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Db } from "../db/index.js";
 import { verifyApiKey, type Connection } from "../keys.js";
 import type { UpstreamManager } from "../upstream/manager.js";
 import { buildMcpServer } from "./mcpServer.js";
+
+export interface GatewayOptions {
+  /** Verifies OAuth access tokens issued by the control plane's auth server. */
+  tokenVerifier?: OAuthTokenVerifier;
+  /** Advertised in 401s so OAuth-capable clients can discover the auth server. */
+  resourceMetadataUrl?: string;
+}
 
 interface GatewaySession {
   transport: StreamableHTTPServerTransport;
@@ -22,14 +30,33 @@ function jsonRpcError(res: Response, httpStatus: number, code: number, message: 
   res.status(httpStatus).json({ jsonrpc: "2.0", error: { code, message }, id: null });
 }
 
-function requireApiKey(db: Db) {
-  return (req: Request, res: Response, next: NextFunction): void => {
+/** Accepts either a header API key (cpk_*) or an OAuth access token from our auth server. */
+function requireConnection(db: Db, options: GatewayOptions) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const header = req.headers.authorization;
     const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
-    const connection = token ? verifyApiKey(db, token) : null;
+
+    let connection: Connection | null = null;
+    if (token?.startsWith("cpk_")) {
+      connection = verifyApiKey(db, token);
+    } else if (token && options.tokenVerifier) {
+      try {
+        const info = await options.tokenVerifier.verifyAccessToken(token);
+        const extra = info.extra as { apiKeyId?: number; keyName?: string } | undefined;
+        if (extra?.apiKeyId != null && extra.keyName) {
+          connection = { keyId: extra.apiKeyId, keyName: extra.keyName };
+        }
+      } catch {
+        connection = null;
+      }
+    }
+
     if (!connection) {
-      res.set("WWW-Authenticate", 'Bearer error="invalid_token"');
-      jsonRpcError(res, 401, -32001, "Unauthorized: valid API key required");
+      const resourceMetadata = options.resourceMetadataUrl
+        ? `, resource_metadata="${options.resourceMetadataUrl}"`
+        : "";
+      res.set("WWW-Authenticate", `Bearer error="invalid_token"${resourceMetadata}`);
+      jsonRpcError(res, 401, -32001, "Unauthorized: valid API key or OAuth access token required");
       return;
     }
     res.locals.connection = connection;
@@ -37,11 +64,11 @@ function requireApiKey(db: Db) {
   };
 }
 
-export function createGateway(db: Db, manager: UpstreamManager): Gateway {
+export function createGateway(db: Db, manager: UpstreamManager, options: GatewayOptions = {}): Gateway {
   const sessions = new Map<string, GatewaySession>();
   const router = Router();
 
-  router.use("/mcp", requireApiKey(db));
+  router.use("/mcp", requireConnection(db, options));
 
   // A session belongs to the API key that initialized it; other keys may not touch it.
   function resolveSession(req: Request, res: Response): GatewaySession | "none" | "denied" {

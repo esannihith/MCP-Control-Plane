@@ -84,3 +84,29 @@ From any connected client's chat:
 Switching affects **only that client** — ChatGPT on Jane's account never moves Gemini off John's. Bindings persist across sessions/restarts (they're keyed to the API key, not the session). `control_plane_status` shows this connection's current binding per upstream.
 
 Two-client demo: create two API keys (`npm run key -- create client-a`, `... client-b`), connect two different MCP clients with them, bind each to a different account, and call an identity-revealing tool from both.
+
+**Troubleshooting — "Invalid MCP state. Please enable browser cookies and try again." on the vendor's authorize page** (seen with Chrome; Brave worked): this error comes from the *vendor's* OAuth page, not the control plane — our link flow uses no cookies at all (state travels in the URL). Vendors like Notion set a browser cookie to pin their own OAuth state; a profile with stale vendor cookies, strict tracking protection, or an interfering extension breaks *their* check. Fix: clear cookies for the vendor's domain (or use an incognito window / another profile) and re-run the link command. Verified working via a real client (Antigravity) on 2026-07-09.
+
+## Part 5 — OAuth for web clients (claude.ai / ChatGPT)
+
+The control plane is now its own OAuth 2.1 authorization server, which is the only way claude.ai and ChatGPT connectors can authenticate (they cannot send API-key headers). One-time setup:
+
+```bash
+npm run owner -- set-password          # generates + prints the owner password (or pass your own)
+```
+
+**Local sanity check** (works without a tunnel): point MCP Inspector or any OAuth-capable client at `http://127.0.0.1:8720/mcp` with no credentials. You'll get the discovery → registration → consent flow; enter the owner password on the consent page and approve. `control_plane_status` then shows your connection as `oauth:<client-name>:<id>`.
+
+**Web clients need a public HTTPS URL** (manual step):
+
+```bash
+# e.g. Cloudflare Tunnel (or any reverse proxy with TLS)
+cloudflared tunnel --url http://127.0.0.1:8720
+```
+
+Set `CP_PUBLIC_URL=https://<your-tunnel-host>` in `.env` and restart — the OAuth metadata advertises this URL, so it must match what clients see. Then:
+
+- **claude.ai**: Settings → Connectors → Add custom connector → paste `https://<host>/mcp`. Claude discovers the auth server, registers itself, and sends you to the consent page.
+- **ChatGPT**: Settings → Apps & Connectors (developer mode) → create a connector with the same URL and OAuth.
+
+Each approved client becomes its own connection (visible in `npm run key -- list` as `oauth:...`) with its own account bindings — revoke it there to cut access. Quick-tunnel caveat: a fresh `cloudflared --url` hostname changes on every run, which changes `CP_PUBLIC_URL` and invalidates prior client registrations; use a named tunnel or stable domain for anything beyond a demo.
