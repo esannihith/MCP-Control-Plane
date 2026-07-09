@@ -132,6 +132,30 @@ describe("upstream OAuth", () => {
     expect(app.manager.status()).toMatchObject([{ name: "unlinked", connected: false, toolCount: 0 }]);
   });
 
+  it("does not re-authorize an already-linked label unless forced", async () => {
+    const mock = await mockUpstream("gmailish");
+    const dbPath = tempDbPath();
+    await linkTestAccount(dbPath, mock, "john@example.com");
+    const authsAfterFirst = mock.counters.authorizations;
+
+    // Same label again without --relink: verifies existing tokens, no new consent.
+    const again = await linkTestAccount(dbPath, mock, "john@example.com");
+    expect(again.linked).toBe(true);
+    expect(mock.counters.authorizations).toBe(authsAfterFirst);
+
+    // Forced relink discards tokens and runs a fresh authorization.
+    const db = openDb(dbPath);
+    const upstream = listUpstreams(db)[0];
+    await linkAccount(db, new Vault(MASTER_KEY), upstream, {
+      label: "john@example.com",
+      openUrl: approveInBrowser,
+      forceReauth: true,
+      timeoutMs: 10_000,
+    });
+    db.close();
+    expect(mock.counters.authorizations).toBe(authsAfterFirst + 1);
+  });
+
   it("removes the account row when the link flow fails", async () => {
     const mock = await mockUpstream("flaky");
     const dbPath = tempDbPath();

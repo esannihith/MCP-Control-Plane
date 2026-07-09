@@ -14,6 +14,8 @@ export interface LinkOptions {
   label: string;
   /** Delivers the authorization URL to the user (print it, open a browser, or fetch it in tests). */
   openUrl: (url: URL) => void | Promise<void>;
+  /** Discard the label's stored tokens and run a fresh authorization even if it is already linked. */
+  forceReauth?: boolean;
   callbackPort?: number;
   timeoutMs?: number;
 }
@@ -46,6 +48,9 @@ function registeredCallbackPort(db: Db, vault: Vault, upstreamId: number): numbe
 export async function linkAccount(db: Db, vault: Vault, upstream: UpstreamRow, options: LinkOptions): Promise<LinkedAccount> {
   const account = upsertAccount(db, upstream.id, options.label);
   const wasLinked = account.linked;
+  if (options.forceReauth && wasLinked) {
+    db.prepare("UPDATE linked_accounts SET tokens_enc = NULL WHERE id = ?").run(account.id);
+  }
 
   const preferredPort = options.callbackPort ?? registeredCallbackPort(db, vault, upstream.id) ?? 0;
   const httpServer = createServer();

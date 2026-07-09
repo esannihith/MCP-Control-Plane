@@ -118,8 +118,12 @@ class TestClientProvider implements OAuthClientProvider {
   }
 }
 
-async function oauthConnect(baseUrl: string, password = OWNER_PASSWORD): Promise<{ client: Client; provider: TestClientProvider }> {
-  const provider = new TestClientProvider(baseUrl, password);
+async function oauthConnect(
+  baseUrl: string,
+  password = OWNER_PASSWORD,
+  existingProvider?: TestClientProvider,
+): Promise<{ client: Client; provider: TestClientProvider }> {
+  const provider = existingProvider ?? new TestClientProvider(baseUrl, password);
   const client = new Client({ name: "test-web-client", version: "0.0.1" });
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), { authProvider: provider });
   try {
@@ -154,7 +158,26 @@ describe("authorization server", () => {
 
     const status = JSON.parse(firstText(await client.callTool({ name: "control_plane_status", arguments: {} })));
     expect(status.status).toBe("ok");
-    expect(status.connection.keyName).toMatch(/^oauth:test-web-client:/);
+    expect(status.connection.keyName).toBe("oauth:test-web-client");
+  });
+
+  it("reuses the connection row when the same client re-authorizes", async () => {
+    const { app, baseUrl } = await startStack();
+    const { client: firstClient, provider } = await oauthConnect(baseUrl);
+    await firstClient.close();
+
+    // Same registered client (client_id preserved), tokens lost — e.g. a
+    // connector re-auth after refresh-token expiry.
+    const reauthProvider = new TestClientProvider(baseUrl, OWNER_PASSWORD);
+    reauthProvider.saveClientInformation(provider.clientInformation()!);
+    const { client: secondClient } = await oauthConnect(baseUrl, OWNER_PASSWORD, reauthProvider);
+
+    const status = JSON.parse(firstText(await secondClient.callTool({ name: "control_plane_status", arguments: {} })));
+    expect(status.connection.keyName).toBe("oauth:test-web-client");
+    const oauthRows = app.db
+      .prepare("SELECT COUNT(*) AS n FROM api_keys WHERE name LIKE 'oauth:%'")
+      .get() as { n: number };
+    expect(oauthRows.n).toBe(1);
   });
 
   it("rejects a wrong owner password without issuing a code", async () => {

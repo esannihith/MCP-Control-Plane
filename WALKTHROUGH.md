@@ -65,6 +65,8 @@ npm run account -- link notion --label other@example.com --no-open
 # account there, approve
 ```
 
+Omitting `--label` always targets the label `default`; linking a label that is already linked is refused (use a new `--label` for a different account, or `--relink` to re-authorize the same one).
+
 Unlink with `npm run account -- unlink notion you@example.com`.
 
 ## Part 4 — Account bindings + switching
@@ -147,7 +149,7 @@ Connections without a profile see the full catalog. Filtered tools are invisible
 
 ## Known issues (unfixed)
 
-- **claude.ai / ChatGPT ignore `tools/list_changed`** — after a catalog change they need a new conversation or a connector refresh. Client limitation; IDE clients update live.
+- **claude.ai / ChatGPT ignore `tools/list_changed`** — after a catalog change they need a new conversation or a connector refresh. Client limitation; IDE clients update live. Note the common trap: an `--oauth` upstream's tools are ingested when its first account is *linked*, so a web client connected before that shows only the 3 built-in tools until refreshed.
 - **Account labels are not verified against the vendor** — if your browser is logged into the wrong account during linking, the wrong account's tokens are stored under your label. Use incognito when linking extra accounts; identity verification at link time is planned.
 - **Vendor consent pages can fail on browser cookie state** (e.g. Notion's "Invalid MCP state" in Chrome) — external to the control plane; clear vendor cookies or use incognito.
 - **Quick-tunnel URLs invalidate OAuth client registrations** — every new ngrok/cloudflared ephemeral hostname changes `CP_PUBLIC_URL`; web clients must re-register. Use a stable domain or named tunnel.

@@ -147,6 +147,15 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_audit_ts ON audit_log(ts);
     `,
   },
+  {
+    id: 7,
+    // Ties an OAuth grant's connection row to the registered client so
+    // re-authorizations reuse it (keeping bindings/profile) instead of
+    // accumulating a new row per consent.
+    sql: `
+      ALTER TABLE api_keys ADD COLUMN oauth_client_id TEXT;
+    `,
+  },
 ];
 
 export type Db = Database.Database;

@@ -24,8 +24,16 @@ switch (command) {
     const labelIndex = args.indexOf("--label");
     const label = labelIndex >= 0 ? args[labelIndex + 1] : "default";
     const noOpen = args.includes("--no-open");
+    const relink = args.includes("--relink");
     const vault = new Vault(config.masterKey);
     const existing = listAccounts(db, upstream.id).filter((a) => a.linked);
+    if (existing.some((a) => a.label === label) && !relink) {
+      usage(
+        `Account '${label}' is ALREADY linked at '${upstreamName}' — no new authorization was started.\n` +
+          `  To link a DIFFERENT account:   npm run account -- link ${upstreamName} --label <new-label>\n` +
+          `  To re-authorize '${label}':    npm run account -- link ${upstreamName} --label ${label} --relink`,
+      );
+    }
     console.log(`Linking account '${label}' at upstream '${upstreamName}'...`);
     if (existing.length > 0) {
       console.log(
@@ -35,6 +43,7 @@ switch (command) {
     }
     const account = await linkAccount(db, vault, upstream, {
       label,
+      forceReauth: relink,
       openUrl: (url) => {
         console.log(`\nOpen this URL in your browser to authorize:\n\n  ${url}\n`);
         if (!noOpen) exec(`start "" "${url}"`); // best-effort browser launch on Windows
@@ -83,6 +92,6 @@ db.close();
 
 function usage(error?: string): never {
   if (error) console.error(`Error: ${error}\n`);
-  console.log("Usage: npm run account -- <link|list|unlink> [upstream] [label] [--label <label>] [--no-open]");
+  console.log("Usage: npm run account -- <link|list|unlink> [upstream] [label] [--label <label>] [--no-open] [--relink]");
   process.exit(error ? 1 : 0);
 }

@@ -87,14 +87,7 @@ export class ControlPlaneAuthProvider implements OAuthServerProvider {
     }
     this.flows.delete(flowId);
 
-    const clientName = (flow.client.client_name ?? flow.client.client_id).slice(0, 40);
-    const connectionName = `oauth:${clientName}:${randomBytes(3).toString("hex")}`;
-    // Random hash: this connection row can never be used as a header API key.
-    const keyId = Number(
-      this.db
-        .prepare("INSERT INTO api_keys (name, key_hash) VALUES (?, ?)")
-        .run(connectionName, sha256(randomBytes(32).toString("hex"))).lastInsertRowid,
-    );
+    const keyId = this.connectionForClient(flow.client);
 
     const code = `ac_${randomBytes(24).toString("hex")}`;
     this.db
@@ -115,6 +108,30 @@ export class ControlPlaneAuthProvider implements OAuthServerProvider {
     redirect.searchParams.set("code", code);
     if (flow.params.state) redirect.searchParams.set("state", flow.params.state);
     return redirect;
+  }
+
+  /**
+   * Re-authorizations from the same registered client reuse its connection
+   * row, so bindings and profile assignments survive token-refresh failures
+   * and connector re-auth. Fresh clients get a readable unique name.
+   */
+  private connectionForClient(client: OAuthClientInformationFull): number {
+    const existing = this.db
+      .prepare("SELECT id FROM api_keys WHERE oauth_client_id = ? AND revoked_at IS NULL")
+      .get(client.client_id) as { id: number } | undefined;
+    if (existing) return existing.id;
+
+    const base = `oauth:${(client.client_name ?? client.client_id).slice(0, 40)}`;
+    let name = base;
+    for (let i = 2; this.db.prepare("SELECT 1 FROM api_keys WHERE name = ?").get(name); i++) {
+      name = `${base}-${i}`;
+    }
+    // Random hash: this connection row can never be used as a header API key.
+    return Number(
+      this.db
+        .prepare("INSERT INTO api_keys (name, key_hash, oauth_client_id) VALUES (?, ?, ?)")
+        .run(name, sha256(randomBytes(32).toString("hex")), client.client_id).lastInsertRowid,
+    );
   }
 
   async challengeForAuthorizationCode(client: OAuthClientInformationFull, authorizationCode: string): Promise<string> {
