@@ -21,6 +21,7 @@ export interface IngestedTool {
 
 export interface ExposedTool {
   exposedName: string;
+  upstreamName: string;
   description: string | null;
   inputSchema: string;
 }
@@ -102,12 +103,17 @@ export function listExposedTools(db: Db): ExposedTool[] {
   return (
     db
       .prepare(
-        `SELECT t.exposed_name, t.description, t.input_schema
+        `SELECT t.exposed_name, u.name AS upstream_name, t.description, t.input_schema
          FROM upstream_tools t JOIN upstreams u ON u.id = t.upstream_id
          WHERE u.enabled = 1 ORDER BY t.exposed_name`,
       )
-      .all() as { exposed_name: string; description: string | null; input_schema: string }[]
-  ).map((row) => ({ exposedName: row.exposed_name, description: row.description, inputSchema: row.input_schema }));
+      .all() as { exposed_name: string; upstream_name: string; description: string | null; input_schema: string }[]
+  ).map((row) => ({
+    exposedName: row.exposed_name,
+    upstreamName: row.upstream_name,
+    description: row.description,
+    inputSchema: row.input_schema,
+  }));
 }
 
 export function resolveTool(db: Db, exposedName: string): ResolvedTool | null {

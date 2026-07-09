@@ -113,6 +113,40 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: 6,
+    // Profiles are allowlists; a connection without one sees the full catalog.
+    // audit_log stores metadata only — detail holds control-plane-generated
+    // strings, never upstream payloads.
+    sql: `
+      CREATE TABLE profiles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE profile_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        upstream_name TEXT NOT NULL,
+        tool_pattern TEXT NOT NULL DEFAULT '*',
+        UNIQUE (profile_id, upstream_name, tool_pattern)
+      );
+      ALTER TABLE api_keys ADD COLUMN profile_id INTEGER REFERENCES profiles(id);
+      CREATE TABLE audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL DEFAULT (datetime('now')),
+        api_key_id INTEGER NOT NULL,
+        key_name TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        upstream TEXT,
+        account TEXT,
+        outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'error', 'denied', 'account_required')),
+        duration_ms INTEGER NOT NULL,
+        detail TEXT
+      );
+      CREATE INDEX idx_audit_ts ON audit_log(ts);
+    `,
+  },
 ];
 
 export type Db = Database.Database;

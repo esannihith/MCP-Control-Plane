@@ -11,6 +11,8 @@ import type { Db } from "../db/index.js";
 import type { Connection } from "../keys.js";
 import { listAccounts, type LinkedAccount } from "../accounts/index.js";
 import { getBinding, setBinding } from "../accounts/bindings.js";
+import { recordAudit, type AuditOutcome } from "../audit.js";
+import { getProfileForConnection, isToolAllowed } from "../profiles.js";
 import type { UpstreamManager } from "../upstream/manager.js";
 import { getUpstream, listExposedTools, listUpstreams, resolveTool } from "../upstream/registry.js";
 import { SERVER_NAME, SERVER_VERSION } from "../version.js";
@@ -88,39 +90,88 @@ export function buildMcpServer(ctx: GatewayContext): Server {
     { capabilities: { tools: { listChanged: true } }, instructions: buildInstructions(ctx.db) },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      ...BUILTIN_TOOLS,
-      ...listExposedTools(ctx.db).map(
-        (tool): Tool => ({
-          name: tool.exposedName,
-          description: tool.description ?? undefined,
-          inputSchema: JSON.parse(tool.inputSchema),
-        }),
-      ),
-    ],
-  }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const profile = getProfileForConnection(ctx.db, ctx.connection.keyId);
+    return {
+      tools: [
+        ...BUILTIN_TOOLS,
+        ...listExposedTools(ctx.db)
+          .filter((tool) => isToolAllowed(profile, tool.upstreamName, tool.exposedName))
+          .map(
+            (tool): Tool => ({
+              name: tool.exposedName,
+              description: tool.description ?? undefined,
+              inputSchema: JSON.parse(tool.inputSchema),
+            }),
+          ),
+      ],
+    };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
     const { name, arguments: args } = request.params;
-    switch (name) {
-      case "control_plane_status":
-        return statusResult(ctx);
-      case "list_accounts":
-        return listAccountsResult(ctx, (args as { upstream?: string })?.upstream);
-      case "switch_account":
-        return switchAccount(ctx, args as { upstream: string; account: string });
-      default: {
-        const resolved = resolveTool(ctx.db, name);
-        if (!resolved) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
+    const started = Date.now();
+    const audit = (
+      outcome: AuditOutcome,
+      extra: { upstream?: string | null; account?: string | null; detail?: string | null } = {},
+    ) =>
+      recordAudit(ctx.db, {
+        apiKeyId: ctx.connection.keyId,
+        keyName: ctx.connection.keyName,
+        tool: name,
+        outcome,
+        durationMs: Date.now() - started,
+        ...extra,
+      });
 
-        const upstream = getUpstream(ctx.db, resolved.upstreamId);
-        if (upstream?.auth_mode !== "oauth") return ctx.manager.callTool(resolved, args ?? {});
+    if (name === "control_plane_status" || name === "list_accounts" || name === "switch_account") {
+      const result =
+        name === "control_plane_status"
+          ? statusResult(ctx)
+          : name === "list_accounts"
+            ? listAccountsResult(ctx, (args as { upstream?: string })?.upstream)
+            : switchAccount(ctx, args as { upstream: string; account: string });
+      audit(result.isError ? "error" : "ok");
+      return result;
+    }
 
-        const account = resolveAccountForCall(ctx, resolved.upstreamId);
-        if ("required" in account) return account.required;
-        return ctx.manager.callTool(resolved, args ?? {}, account.id);
+    // A tool outside the profile is indistinguishable from a nonexistent one
+    // to the caller, but the audit trail records which it was.
+    const resolved = resolveTool(ctx.db, name);
+    const profile = getProfileForConnection(ctx.db, ctx.connection.keyId);
+    if (!resolved || !isToolAllowed(profile, resolved.upstreamName, name)) {
+      audit(resolved ? "denied" : "error", {
+        upstream: resolved?.upstreamName,
+        detail: resolved ? `blocked by profile '${profile?.name}'` : "unknown tool",
+      });
+      throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
+    }
+
+    const upstream = getUpstream(ctx.db, resolved.upstreamId);
+    let accountId: number | undefined;
+    let accountLabel: string | null = null;
+    if (upstream?.auth_mode === "oauth") {
+      const account = resolveAccountForCall(ctx, resolved.upstreamId);
+      if ("required" in account) {
+        audit("account_required", { upstream: resolved.upstreamName });
+        return account.required;
       }
+      accountId = account.id;
+      accountLabel = account.label;
+    }
+
+    try {
+      const result = await ctx.manager.callTool(resolved, args ?? {}, accountId);
+      // detail stays null for upstream error results: no payloads in the audit log.
+      audit(result.isError ? "error" : "ok", { upstream: resolved.upstreamName, account: accountLabel });
+      return result;
+    } catch (error) {
+      audit("error", {
+        upstream: resolved.upstreamName,
+        account: accountLabel,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   });
 
@@ -135,15 +186,15 @@ export function buildMcpServer(ctx: GatewayContext): Server {
 function resolveAccountForCall(
   ctx: GatewayContext,
   upstreamId: number,
-): { id: number } | { required: CallToolResult } {
+): { id: number; label: string } | { required: CallToolResult } {
   const linked = listAccounts(ctx.db, upstreamId).filter((account) => account.linked);
   const boundId = getBinding(ctx.db, ctx.connection.keyId, upstreamId);
   const bound = boundId != null ? linked.find((account) => account.id === boundId) : undefined;
-  if (bound) return { id: bound.id };
+  if (bound) return { id: bound.id, label: bound.label };
 
   if (linked.length === 1) {
     setBinding(ctx.db, ctx.connection.keyId, upstreamId, linked[0].id);
-    return { id: linked[0].id };
+    return { id: linked[0].id, label: linked[0].label };
   }
 
   const upstreamName = getUpstream(ctx.db, upstreamId)?.name ?? String(upstreamId);
@@ -209,7 +260,10 @@ function statusResult(ctx: GatewayContext): CallToolResult {
     status: "ok",
     server: SERVER_NAME,
     version: SERVER_VERSION,
-    connection: { keyName: ctx.connection.keyName },
+    connection: {
+      keyName: ctx.connection.keyName,
+      profile: getProfileForConnection(ctx.db, ctx.connection.keyId)?.name ?? null,
+    },
     sessionId: ctx.getSessionId() ?? null,
     upstreams: ctx.manager.status(),
     bindings,

@@ -184,4 +184,13 @@ describe("account bindings", () => {
     const status = JSON.parse(firstText(await client.callTool({ name: "control_plane_status", arguments: {} })));
     expect(status.bindings).toEqual([{ upstream: "vendor", account: "john@example.com" }]);
   });
+
+  it("records the bound account label in the audit trail", async () => {
+    const { app, connect } = await startScenario(["john"]);
+    const client = await connect("chatgpt");
+    await whoami(client);
+    const { listAudit } = await import("../src/audit.js");
+    const row = listAudit(app.db).find((r) => r.tool === "vendor_whoami");
+    expect(row).toMatchObject({ upstream: "vendor", account: "john@example.com", outcome: "ok" });
+  });
 });

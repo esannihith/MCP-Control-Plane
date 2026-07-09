@@ -131,3 +131,24 @@ npm run account -- link linear --label you@example.com    # ingests linear's too
 ```
 
 Within ~5s every live session gets `tools/list_changed`. In an IDE client the `linear_*` tools just appear. In claude.ai/ChatGPT, start a new conversation or refresh the connector (bindings survive — they're keyed to the connection, not the session).
+
+## Part 6 — Profiles + audit log
+
+```bash
+npm run profile -- create phone            # new profiles allow NOTHING until rules are added
+npm run profile -- allow phone notion      # all notion tools
+npm run profile -- allow phone linear "linear_list*"   # prefix pattern
+npm run profile -- assign chatgpt-web phone            # key name from: npm run key -- list
+npm run profile -- list
+npm run audit -- tail 50
+```
+
+Connections without a profile see the full catalog. Filtered tools are invisible in `tools/list` and calls to them fail as unknown (audited as `denied`). Every tool call writes one metadata-only audit row: connection, tool, upstream, account, outcome, duration — never arguments or results. `control_plane_status` now shows the connection's profile.
+
+## Known issues (unfixed)
+
+- **claude.ai / ChatGPT ignore `tools/list_changed`** — after a catalog change they need a new conversation or a connector refresh. Client limitation; IDE clients update live.
+- **Account labels are not verified against the vendor** — if your browser is logged into the wrong account during linking, the wrong account's tokens are stored under your label. Use incognito when linking extra accounts; identity verification at link time is planned.
+- **Vendor consent pages can fail on browser cookie state** (e.g. Notion's "Invalid MCP state" in Chrome) — external to the control plane; clear vendor cookies or use incognito.
+- **Quick-tunnel URLs invalidate OAuth client registrations** — every new ngrok/cloudflared ephemeral hostname changes `CP_PUBLIC_URL`; web clients must re-register. Use a stable domain or named tunnel.
+- **Expired upstream re-auth needs the CLI** — if a vendor refresh token dies, the server won't prompt anyone; re-run `npm run account -- link`.
