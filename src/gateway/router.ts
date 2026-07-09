@@ -68,7 +68,10 @@ export function createGateway(db: Db, manager: UpstreamManager, options: Gateway
   const sessions = new Map<string, GatewaySession>();
   const router = Router();
 
-  router.use("/mcp", requireConnection(db, options));
+  // Some web clients (observed with ChatGPT connectors) send MCP traffic to
+  // the origin root instead of the advertised /mcp path — serve both.
+  const MCP_PATHS = ["/mcp", "/"];
+  const requireAuth = requireConnection(db, options);
 
   // A session belongs to the API key that initialized it; other keys may not touch it.
   function resolveSession(req: Request, res: Response): GatewaySession | "none" | "denied" {
@@ -81,7 +84,7 @@ export function createGateway(db: Db, manager: UpstreamManager, options: Gateway
     return session;
   }
 
-  router.post("/mcp", async (req: Request, res: Response) => {
+  router.post(MCP_PATHS, requireAuth, async (req: Request, res: Response) => {
     const session = resolveSession(req, res);
     if (session === "denied") {
       jsonRpcError(res, 403, -32003, "Forbidden: session belongs to a different connection");
@@ -93,7 +96,13 @@ export function createGateway(db: Db, manager: UpstreamManager, options: Gateway
       return;
     }
 
-    if (req.headers["mcp-session-id"] || !isInitializeRequest(req.body)) {
+    // Spec: unknown/expired session IDs get 404 so conforming clients
+    // re-initialize transparently (e.g. after a control-plane restart).
+    if (req.headers["mcp-session-id"]) {
+      jsonRpcError(res, 404, -32001, "Session not found or expired; start a new session with initialize");
+      return;
+    }
+    if (!isInitializeRequest(req.body)) {
       jsonRpcError(res, 400, -32000, "Bad Request: no valid session; send an initialize request first");
       return;
     }
@@ -125,13 +134,19 @@ export function createGateway(db: Db, manager: UpstreamManager, options: Gateway
       return;
     }
     if (session === "none") {
-      jsonRpcError(res, 400, -32000, "Bad Request: unknown or missing session ID");
+      const hadSessionId = typeof req.headers["mcp-session-id"] === "string";
+      jsonRpcError(
+        res,
+        hadSessionId ? 404 : 400,
+        -32001,
+        hadSessionId ? "Session not found or expired" : "Bad Request: missing session ID",
+      );
       return;
     }
     await session.transport.handleRequest(req, res);
   };
-  router.get("/mcp", handleExisting);
-  router.delete("/mcp", handleExisting);
+  router.get(MCP_PATHS, requireAuth, handleExisting);
+  router.delete(MCP_PATHS, requireAuth, handleExisting);
 
   return {
     router,

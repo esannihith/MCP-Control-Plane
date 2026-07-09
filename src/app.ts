@@ -53,6 +53,10 @@ export async function buildApp(config: Config): Promise<App> {
   });
 
   const app = express();
+  // Behind a tunnel/reverse proxy (ngrok, cloudflared) X-Forwarded-For must be
+  // trusted or the auth endpoints' rate limiter rejects requests. Trust exactly
+  // one hop — `true` would let any caller spoof their IP past rate limiting.
+  app.set("trust proxy", 1);
   app.use(cors);
   app.use(express.json({ limit: "4mb" }));
 

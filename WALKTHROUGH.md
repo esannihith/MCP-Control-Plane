@@ -110,3 +110,27 @@ Set `CP_PUBLIC_URL=https://<your-tunnel-host>` in `.env` and restart — the OAu
 - **ChatGPT**: Settings → Apps & Connectors (developer mode) → create a connector with the same URL and OAuth.
 
 Each approved client becomes its own connection (visible in `npm run key -- list` as `oauth:...`) with its own account bindings — revoke it there to cut access. Quick-tunnel caveat: a fresh `cloudflared --url` hostname changes on every run, which changes `CP_PUBLIC_URL` and invalidates prior client registrations; use a named tunnel or stable domain for anything beyond a demo.
+
+Verified 2026-07-09 through an ngrok tunnel with two claude.ai clients and ChatGPT against two linked Notion accounts. Two proxy lessons baked into the code since: `trust proxy` must be set behind a tunnel (the auth endpoints' rate limiter rejects forwarded requests otherwise), and some web clients send MCP traffic to the origin root, so `/` now serves MCP alongside `/mcp`.
+
+### Adding another vendor: do clients pick up the new tools?
+
+How it actually behaves:
+
+- The control plane computes `tools/list` fresh from its registry on every request — it never serves a stale catalog.
+- But web clients only *ask* once per MCP session, and mid-session push (`tools/list_changed`) isn't emitted yet (Phase 2 — and claude.ai/ChatGPT ignore the notification anyway per the client matrix).
+- So new tools appear whenever the client starts a **new session**. Restarting the control plane forces this everywhere: old session IDs now get a 404, which spec-conforming clients answer by silently re-initializing — and re-listing tools.
+
+To test:
+
+```bash
+npm run upstream -- add linear https://mcp.linear.app/mcp --oauth   # any second vendor
+npm run account -- link linear --label you@example.com
+# restart npm run dev (keep the tunnel process running — same URL)
+```
+
+Then per client:
+
+- **claude.ai**: start a new conversation and open the connector's tool list — `linear_*` tools should be there. If not, toggle the connector off/on in Settings → Connectors.
+- **ChatGPT**: connector settings → refresh the connector (or worst case remove/re-add — your account bindings survive either way, they're keyed to the connection).
+- **IDE clients (Cursor/VS Code/Claude Code)**: reconnect the server from the MCP panel, or just wait — their next session lists fresh.

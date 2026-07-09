@@ -26,9 +26,9 @@ async function startServer(): Promise<TestServer> {
   return running;
 }
 
-async function connectClient(url: string, key: string): Promise<Client> {
+async function connectClient(url: string, key: string, path = "/mcp"): Promise<Client> {
   const client = new Client({ name: "test-client", version: "0.0.1" });
-  const transport = new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
+  const transport = new StreamableHTTPClientTransport(new URL(`${url}${path}`), {
     requestInit: { headers: { Authorization: `Bearer ${key}` } },
   });
   await client.connect(transport);
@@ -133,6 +133,32 @@ describe("gateway sessions and tools", () => {
       body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 2 }),
     });
     expect(res.status).toBe(403);
+  });
+
+  it("serves MCP at the root path alias (some web clients POST to /)", async () => {
+    const { url, app } = await startServer();
+    const { key } = createApiKey(app.db, "root-client");
+    const client = await connectClient(url, key, "/");
+    const result = await client.callTool({ name: "control_plane_status", arguments: {} });
+    const status = JSON.parse((result.content as { text: string }[])[0].text);
+    expect(status.status).toBe("ok");
+    expect(status.connection.keyName).toBe("root-client");
+  });
+
+  it("returns 404 for unknown session IDs so clients re-initialize", async () => {
+    const { url, app } = await startServer();
+    const { key } = createApiKey(app.db, "restarted");
+    const res = await fetch(`${url}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${key}`,
+        "mcp-session-id": "session-from-before-a-restart",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
+    });
+    expect(res.status).toBe(404);
   });
 
   it("terminates a session on DELETE", async () => {
