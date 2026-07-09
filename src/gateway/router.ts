@@ -17,12 +17,15 @@ export interface GatewayOptions {
 
 interface GatewaySession {
   transport: StreamableHTTPServerTransport;
+  server: ReturnType<typeof buildMcpServer>;
   connection: Connection;
 }
 
 export interface Gateway {
   router: Router;
   sessions: Map<string, GatewaySession>;
+  /** Broadcasts tools/list_changed to every live session (best effort). */
+  notifyToolListChanged(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -111,7 +114,7 @@ export function createGateway(db: Db, manager: UpstreamManager, options: Gateway
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sessionId) => {
-        sessions.set(sessionId, { transport, connection });
+        sessions.set(sessionId, { transport, server, connection });
       },
       onsessionclosed: (sessionId) => {
         sessions.delete(sessionId);
@@ -125,6 +128,12 @@ export function createGateway(db: Db, manager: UpstreamManager, options: Gateway
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   });
+
+  async function notifyToolListChanged(): Promise<void> {
+    // Best effort: a session without an open notification stream just misses it
+    // and still gets fresh tools on its next tools/list.
+    await Promise.allSettled([...sessions.values()].map((session) => session.server.sendToolListChanged()));
+  }
 
   // GET serves the SSE notification stream; DELETE terminates the session.
   const handleExisting = async (req: Request, res: Response): Promise<void> => {
@@ -151,6 +160,7 @@ export function createGateway(db: Db, manager: UpstreamManager, options: Gateway
   return {
     router,
     sessions,
+    notifyToolListChanged,
     async close() {
       await Promise.allSettled([...sessions.values()].map((s) => s.transport.close()));
       sessions.clear();

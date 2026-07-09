@@ -1,19 +1,8 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { Db } from "../db/index.js";
+import { getSetting, setSetting } from "../db/settings.js";
 
 const SETTING_KEY = "owner_password";
-
-function getSetting(db: Db, key: string): string | null {
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
-  return row?.value ?? null;
-}
-
-function setSetting(db: Db, key: string, value: string): void {
-  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(
-    key,
-    value,
-  );
-}
 
 export function hasOwnerPassword(db: Db): boolean {
   return getSetting(db, SETTING_KEY) != null;

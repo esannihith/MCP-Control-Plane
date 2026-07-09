@@ -28,7 +28,7 @@ const BUILTIN_TOOLS: Tool[] = [
   {
     name: "control_plane_status",
     description:
-      "Reports the control plane's health, this client connection, upstream servers, and current account bindings.",
+      "Reports the control plane's health, this client connection, ALL proxied upstream vendor servers (with live tool counts), and current account bindings. Call this before concluding that a vendor or tool is unavailable — the catalog can grow mid-session.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -68,8 +68,25 @@ const errorText = (message: string): CallToolResult => ({ isError: true, content
  * Uses the low-level Server so upstream tools can be exposed with their
  * original JSON Schemas instead of being re-modelled.
  */
+/** Shown to the model at initialize — stops clients treating this as a single-vendor proxy. */
+function buildInstructions(db: Db): string {
+  const vendors = listUpstreams(db, true).map((u) => u.name);
+  return [
+    `This server is an MCP *control plane*: one endpoint proxying multiple upstream vendor MCP servers${
+      vendors.length ? ` (currently: ${vendors.join(", ")})` : ""
+    }.`,
+    "Vendor tools are namespaced '<vendor>_<tool>' (e.g. notion_search, linear_list_issues).",
+    "Prefer this server's tools for any vendor it proxies — do NOT suggest connecting a separate vendor connector for vendors listed in control_plane_status.",
+    "The vendor catalog can change mid-session; a tools/list_changed notification is sent when it does. If a vendor or tool seems missing, re-list tools and check control_plane_status before concluding it is unavailable.",
+    "Each vendor may have multiple linked user accounts. Bindings are per client connection: use list_accounts to see them and switch_account to change which account THIS connection uses.",
+  ].join("\n");
+}
+
 export function buildMcpServer(ctx: GatewayContext): Server {
-  const server = new Server({ name: SERVER_NAME, version: SERVER_VERSION }, { capabilities: { tools: {} } });
+  const server = new Server(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { capabilities: { tools: { listChanged: true } }, instructions: buildInstructions(ctx.db) },
+  );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [

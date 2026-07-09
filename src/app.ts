@@ -2,6 +2,7 @@ import express from "express";
 import { createAuthServer } from "./authserver/router.js";
 import type { Config } from "./config.js";
 import { openDb, type Db } from "./db/index.js";
+import { getRegistryVersion } from "./db/settings.js";
 import { createGateway, type Gateway } from "./gateway/router.js";
 import { UpstreamManager } from "./upstream/manager.js";
 import { Vault } from "./vault/index.js";
@@ -67,6 +68,22 @@ export async function buildApp(config: Config): Promise<App> {
   app.use(authServer.router);
   app.use(gateway.router);
 
+  // Catalog changes bump registry_version — including from CLI processes that
+  // share the SQLite file. Poll it and tell live sessions the tool list moved.
+  let lastRegistryVersion = getRegistryVersion(db);
+  const registryWatcher = setInterval(() => {
+    try {
+      const version = getRegistryVersion(db);
+      if (version !== lastRegistryVersion) {
+        lastRegistryVersion = version;
+        void gateway.notifyToolListChanged();
+      }
+    } catch {
+      // db closing during shutdown — the interval is about to be cleared
+    }
+  }, config.registryPollMs);
+  registryWatcher.unref();
+
   return {
     app,
     db,
@@ -74,6 +91,7 @@ export async function buildApp(config: Config): Promise<App> {
     manager,
     vault,
     async close() {
+      clearInterval(registryWatcher);
       await gateway.close();
       await manager.stop();
       db.close();

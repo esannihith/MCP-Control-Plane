@@ -1,4 +1,5 @@
 import type { Db } from "../db/index.js";
+import { bumpRegistryVersion } from "../db/settings.js";
 import { exposedToolName } from "./naming.js";
 
 export type AuthMode = "none" | "bearer" | "oauth";
@@ -54,6 +55,7 @@ export function addUpstream(
   const result = db
     .prepare("INSERT INTO upstreams (name, url, bearer_token, auth_mode) VALUES (?, ?, ?, ?)")
     .run(name, url, options.bearerToken ?? null, authMode);
+  bumpRegistryVersion(db);
   return {
     id: Number(result.lastInsertRowid),
     name,
@@ -65,7 +67,9 @@ export function addUpstream(
 }
 
 export function removeUpstream(db: Db, name: string): boolean {
-  return db.prepare("DELETE FROM upstreams WHERE name = ?").run(name).changes > 0;
+  const removed = db.prepare("DELETE FROM upstreams WHERE name = ?").run(name).changes > 0;
+  if (removed) bumpRegistryVersion(db);
+  return removed;
 }
 
 /**
@@ -88,6 +92,7 @@ export function refreshUpstreamTools(db: Db, upstream: { id: number; name: strin
       taken.add(exposed);
       insert.run(upstream.id, tool.name, exposed, tool.description ?? null, JSON.stringify(tool.inputSchema));
     }
+    bumpRegistryVersion(db);
     return tools.length;
   });
   return replace();

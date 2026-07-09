@@ -115,22 +115,19 @@ Verified 2026-07-09 through an ngrok tunnel with two claude.ai clients and ChatG
 
 ### Adding another vendor: do clients pick up the new tools?
 
-How it actually behaves:
+How it behaves:
 
 - The control plane computes `tools/list` fresh from its registry on every request — it never serves a stale catalog.
-- But web clients only *ask* once per MCP session, and mid-session push (`tools/list_changed`) isn't emitted yet (Phase 2 — and claude.ai/ChatGPT ignore the notification anyway per the client matrix).
-- So new tools appear whenever the client starts a **new session**. Restarting the control plane forces this everywhere: old session IDs now get a 404, which spec-conforming clients answer by silently re-initializing — and re-listing tools.
+- Every catalog change (upstream added/removed, tools ingested after an account link) bumps a registry version — **including changes made from the CLI while the server runs**. The server watches it (every 5s, `CP_REGISTRY_POLL_MS`) and broadcasts `notifications/tools/list_changed` to all live sessions. Whether a client reacts is up to the client: IDE clients (Cursor, VS Code, Claude Code) refresh automatically; claude.ai/ChatGPT currently ignore the notification.
+- The server's `initialize` response also carries instructions telling models this is a *multi-vendor* control plane whose catalog can grow — so they check `control_plane_status` instead of claiming a vendor is unavailable or suggesting a separate connector.
+- For clients that ignore the notification, new tools appear at their next **session**: new conversation, connector toggle/refresh — or restart the control plane, since old session IDs then 404 and conforming clients silently re-initialize with a fresh list.
 
-To test:
+To test without restarting anything:
 
 ```bash
-npm run upstream -- add linear https://mcp.linear.app/mcp --oauth   # any second vendor
-npm run account -- link linear --label you@example.com
-# restart npm run dev (keep the tunnel process running — same URL)
+# leave npm run dev and the tunnel running
+npm run upstream -- add linear https://mcp.linear.app/mcp --oauth
+npm run account -- link linear --label you@example.com    # ingests linear's tools
 ```
 
-Then per client:
-
-- **claude.ai**: start a new conversation and open the connector's tool list — `linear_*` tools should be there. If not, toggle the connector off/on in Settings → Connectors.
-- **ChatGPT**: connector settings → refresh the connector (or worst case remove/re-add — your account bindings survive either way, they're keyed to the connection).
-- **IDE clients (Cursor/VS Code/Claude Code)**: reconnect the server from the MCP panel, or just wait — their next session lists fresh.
+Within ~5s every live session gets `tools/list_changed`. In an IDE client the `linear_*` tools just appear. In claude.ai/ChatGPT, start a new conversation or refresh the connector (bindings survive — they're keyed to the connection, not the session).
