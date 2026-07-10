@@ -145,6 +145,15 @@ export class UpstreamManager {
     }
   }
 
+  /** Connects (or reconnects) one upstream and re-ingests its tools — e.g. right after an account link. */
+  async refreshUpstream(name: string, accountId?: number): Promise<void> {
+    const row = listUpstreams(this.db, true).find((r) => r.name === name);
+    if (!row) return;
+    const account = accountId ?? (row.auth_mode === "oauth" ? getDefaultAccount(this.db, row.id)?.id : undefined);
+    if (row.auth_mode === "oauth" && account == null) return;
+    await this.connect(row, account).catch(() => {});
+  }
+
   status(): UpstreamStatus[] {
     return listUpstreams(this.db).map((row) => {
       const toolCount = (

@@ -13,6 +13,8 @@ export interface Config {
   masterKey?: string;
   /** How often to check for catalog changes (made by CLI processes) to broadcast tools/list_changed. */
   registryPollMs: number;
+  /** Bootstrap owner password: applied at startup if none is set (fresh remote deploys). */
+  ownerPassword?: string;
 }
 
 export function loadConfig(overrides: Partial<Config> = {}): Config {
@@ -24,5 +26,6 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     publicUrl: overrides.publicUrl ?? process.env.CP_PUBLIC_URL ?? `http://localhost:${port}`,
     masterKey: overrides.masterKey ?? process.env.CP_MASTER_KEY,
     registryPollMs: overrides.registryPollMs ?? Number(process.env.CP_REGISTRY_POLL_MS ?? 5000),
+    ownerPassword: overrides.ownerPassword ?? process.env.CP_OWNER_PASSWORD,
   };
 }

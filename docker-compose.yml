@@ -1,0 +1,12 @@
+services:
+  control-plane:
+    build: .
+    ports:
+      - "8720:8720"
+    env_file: .env
+    environment:
+      CP_HOST: 0.0.0.0
+      CP_DB_PATH: /data/control-plane.db
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

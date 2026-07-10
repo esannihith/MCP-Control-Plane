@@ -147,6 +147,11 @@ npm run audit -- tail 50
 
 Connections without a profile see the full catalog. Filtered tools are invisible in `tools/list` and calls to them fail as unknown (audited as `denied`). Every tool call writes one metadata-only audit row: connection, tool, upstream, account, outcome, duration — never arguments or results. `control_plane_status` now shows the connection's profile.
 
+## Part 7 — Dashboard + deployment
+
+- Dashboard at `/dashboard` (owner password): upstreams, browser-based account linking (works on remote deploys, unlike the CLI's loopback flow), API keys, profiles, bindings, audit view. Destructive actions live only here and in the CLI — never on the MCP surface.
+- Deploy: [DEPLOY.md](DEPLOY.md) (Railway + Docker). CLI-only operation: [CLI.md](CLI.md).
+
 ## Known issues (unfixed)
 
 - **claude.ai / ChatGPT ignore `tools/list_changed`** — after a catalog change they need a new conversation or a connector refresh. Client limitation; IDE clients update live. Note the common trap: an `--oauth` upstream's tools are ingested when its first account is *linked*, so a web client connected before that shows only the 3 built-in tools until refreshed.

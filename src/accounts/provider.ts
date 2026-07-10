@@ -18,6 +18,8 @@ export interface AccountProviderOptions {
   redirectUrl?: string;
   /** Delivers the authorization URL to the user. Absent → headless: authorization attempts fail loudly. */
   onRedirect?: (url: URL) => void | Promise<void>;
+  /** OAuth state parameter — used by the server-side link flow to correlate the callback. */
+  stateValue?: string;
 }
 
 /**
@@ -28,8 +30,12 @@ export interface AccountProviderOptions {
  */
 export class AccountOAuthProvider implements OAuthClientProvider {
   private verifier: string | undefined;
+  /** Only defined when a stateValue is provided, so loopback flows omit state entirely. */
+  state?: () => string;
 
-  constructor(private readonly opts: AccountProviderOptions) {}
+  constructor(private readonly opts: AccountProviderOptions) {
+    if (opts.stateValue) this.state = () => opts.stateValue!;
+  }
 
   get redirectUrl(): string {
     return this.opts.redirectUrl ?? "http://127.0.0.1/unused-headless-callback";

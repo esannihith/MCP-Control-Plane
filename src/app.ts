@@ -1,6 +1,8 @@
 import express from "express";
 import { createAuthServer } from "./authserver/router.js";
+import { hasOwnerPassword, setOwnerPassword } from "./authserver/owner.js";
 import type { Config } from "./config.js";
+import { createDashboard } from "./dashboard/router.js";
 import { openDb, type Db } from "./db/index.js";
 import { getRegistryVersion } from "./db/settings.js";
 import { createGateway, type Gateway } from "./gateway/router.js";
@@ -45,6 +47,7 @@ export async function buildApp(config: Config): Promise<App> {
   const db = openDb(config.dbPath);
   const vault = config.masterKey ? new Vault(config.masterKey) : null;
   if (vault) encryptPlaintextBearerTokens(db, vault);
+  if (config.ownerPassword && !hasOwnerPassword(db)) setOwnerPassword(db, config.ownerPassword);
   const manager = new UpstreamManager(db, vault);
   await manager.start();
   const authServer = createAuthServer(db, config);
@@ -66,6 +69,7 @@ export async function buildApp(config: Config): Promise<App> {
   });
 
   app.use(authServer.router);
+  app.use(createDashboard({ db, vault, manager, config }));
   app.use(gateway.router);
 
   // Catalog changes bump registry_version — including from CLI processes that
