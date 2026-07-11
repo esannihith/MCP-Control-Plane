@@ -148,17 +148,24 @@ describe("dashboard operations", () => {
     const { cookie, csrf } = await dashLogin(baseUrl);
     mock.setNextUser("railway-user");
 
+    // POST opens the launch pad in a new tab (302 to /dashboard/link/<id>).
     const begin = await post(baseUrl, "/dashboard/accounts/link", cookie, {
       upstream: "vendor",
       label: "me@example.com",
       csrf,
     });
     expect(begin.status).toBe(302);
-    const authorizeUrl = begin.headers.get("location")!;
-    expect(authorizeUrl).toContain(mock.issuer);
+    const launchPath = begin.headers.get("location")!;
+    expect(launchPath).toMatch(/^\/dashboard\/link\//);
 
-    // The browser follows: vendor auto-approves -> redirects to /upstream-callback.
-    const done = await fetch(authorizeUrl);
+    const launch = await fetch(`${baseUrl}${launchPath}`, { headers: { cookie } });
+    const launchHtml = await launch.text();
+    const crossBrowserUrl = new RegExp(`${baseUrl}/link/[0-9a-f]+`).exec(launchHtml)?.[0];
+    expect(crossBrowserUrl).toBeTruthy();
+
+    // A DIFFERENT browser (no session cookie) enters via the copyable URL:
+    // vendor auto-approves -> redirects to /upstream-callback.
+    const done = await fetch(crossBrowserUrl!);
     expect(done.status).toBe(200);
     expect(await done.text()).toContain("Linked");
 
@@ -180,6 +187,40 @@ describe("dashboard operations", () => {
       content: { text: string }[];
     };
     expect(result.content[0].text).toBe("user:railway-user");
+  });
+
+  it("supersedes an abandoned link flow for the same account and retries cleanly", async () => {
+    const { baseUrl, mock } = await startStack();
+    const { cookie, csrf } = await dashLogin(baseUrl);
+
+    // First attempt: user closes the vendor tab (flow abandoned server-side).
+    const first = await post(baseUrl, "/dashboard/accounts/link", cookie, {
+      upstream: "vendor",
+      label: "retry@example.com",
+      csrf,
+    });
+    const firstLaunch = first.headers.get("location")!;
+
+    // Second attempt for the same label must start fresh, not hang.
+    mock.setNextUser("second-try");
+    const second = await post(baseUrl, "/dashboard/accounts/link", cookie, {
+      upstream: "vendor",
+      label: "retry@example.com",
+      csrf,
+    });
+    expect(second.status).toBe(302);
+    const secondLaunch = second.headers.get("location")!;
+    expect(secondLaunch).not.toBe(firstLaunch);
+
+    // The superseded flow is dead...
+    const stale = await fetch(`${baseUrl}${firstLaunch}`, { headers: { cookie } });
+    expect(stale.status).toBe(410);
+
+    // ...and the new one completes.
+    const launchHtml = await (await fetch(`${baseUrl}${secondLaunch}`, { headers: { cookie } })).text();
+    const crossBrowserUrl = new RegExp(`${baseUrl}/link/[0-9a-f]+`).exec(launchHtml)![0];
+    const done = await fetch(crossBrowserUrl);
+    expect(await done.text()).toContain("Linked");
   });
 });
 

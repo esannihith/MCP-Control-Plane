@@ -10,6 +10,18 @@ import { AccountOAuthProvider } from "./provider.js";
 import { SERVER_NAME, SERVER_VERSION } from "../version.js";
 
 const FLOW_TTL_MS = 10 * 60 * 1000;
+const VENDOR_TIMEOUT_MS = 15_000;
+
+/** All vendor traffic in link flows gets a hard timeout — a hung fetch must never wedge the dashboard. */
+const timedFetch: typeof fetch = (input, init) =>
+  fetch(input, { ...init, signal: (init?.signal as AbortSignal | undefined) ?? AbortSignal.timeout(10_000) });
+
+export interface StartedLink {
+  flowId: string;
+  authorizeUrl: URL;
+  upstream: string;
+  label: string;
+}
 
 interface PendingLink {
   id: string;
@@ -17,6 +29,7 @@ interface PendingLink {
   accountId: number;
   label: string;
   wasLinked: boolean;
+  authorizeUrl: URL | null;
   transport: StreamableHTTPClientTransport;
   provider: AccountOAuthProvider;
   createdAt: number;
@@ -24,9 +37,11 @@ interface PendingLink {
 
 /**
  * Browser-driven account linking for remote deployments, where the CLI's
- * loopback callback can't work (the browser and the control plane are on
- * different machines). The vendor redirects to `${publicUrl}/upstream-callback`;
- * the flow id travels in the OAuth state parameter.
+ * loopback callback can't work. All flow state (including the PKCE verifier)
+ * lives server-side, so a flow may be *started* in one browser and *completed*
+ * in another — that's what makes incognito linking of second accounts work.
+ * The vendor redirects to `${publicUrl}/upstream-callback`; the flow id
+ * travels in the OAuth state parameter.
  */
 export class ServerLinkManager {
   private flows = new Map<string, PendingLink>();
@@ -41,11 +56,17 @@ export class ServerLinkManager {
     return `${this.publicUrl}/upstream-callback`;
   }
 
-  /** Starts a link flow; returns the vendor authorization URL to send the browser to. */
-  async begin(upstreamName: string, label: string): Promise<URL> {
+  /** Starts a link flow and returns its handle; a stale flow for the same account is superseded. */
+  async begin(upstreamName: string, label: string): Promise<StartedLink> {
+    this.pruneExpired();
     const upstream = listUpstreams(this.db, true).find((u) => u.name === upstreamName);
     if (!upstream) throw new Error(`Unknown upstream '${upstreamName}'`);
     if (upstream.auth_mode !== "oauth") throw new Error(`Upstream '${upstreamName}' does not use OAuth`);
+
+    // Abandoned attempt for the same account? Kill it before starting over.
+    for (const flow of this.flows.values()) {
+      if (flow.upstream.id === upstream.id && flow.label === label) this.cleanupFlow(flow.id);
+    }
 
     // A client registration pinned to a different redirect_uri (e.g. a CLI
     // loopback) would make the vendor reject us — re-register in that case.
@@ -66,7 +87,10 @@ export class ServerLinkManager {
     const account = upsertAccount(this.db, upstream.id, label);
     const flowId = randomBytes(16).toString("hex");
     const authorizationUrl = new Promise<URL>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Vendor did not request authorization")), 15_000);
+      const timer = setTimeout(
+        () => reject(new Error(`The vendor did not respond with an authorization step within ${VENDOR_TIMEOUT_MS / 1000}s — try again`)),
+        VENDOR_TIMEOUT_MS,
+      );
       const provider = new AccountOAuthProvider({
         db: this.db,
         vault: this.vault,
@@ -79,13 +103,17 @@ export class ServerLinkManager {
           resolve(url);
         },
       });
-      const transport = new StreamableHTTPClientTransport(new URL(upstream.url), { authProvider: provider });
+      const transport = new StreamableHTTPClientTransport(new URL(upstream.url), {
+        authProvider: provider,
+        fetch: timedFetch,
+      });
       this.flows.set(flowId, {
         id: flowId,
         upstream,
         accountId: account.id,
         label,
         wasLinked: account.linked,
+        authorizeUrl: null,
         transport,
         provider,
         createdAt: Date.now(),
@@ -110,13 +138,22 @@ export class ServerLinkManager {
         });
     });
 
-    this.pruneExpired();
     try {
-      return await authorizationUrl;
+      const authorizeUrl = await authorizationUrl;
+      const flow = this.flows.get(flowId);
+      if (flow) flow.authorizeUrl = authorizeUrl;
+      return { flowId, authorizeUrl, upstream: upstream.name, label };
     } catch (error) {
       this.cleanupFlow(flowId);
       throw error;
     }
+  }
+
+  /** Looks up a live flow — used by the session-free /link/<id> entry point. */
+  getFlow(flowId: string): StartedLink | null {
+    const flow = this.flows.get(flowId);
+    if (!flow || !flow.authorizeUrl || Date.now() - flow.createdAt > FLOW_TTL_MS) return null;
+    return { flowId: flow.id, authorizeUrl: flow.authorizeUrl, upstream: flow.upstream.name, label: flow.label };
   }
 
   /** Completes a flow from the vendor's redirect; returns the linked label. */
@@ -132,7 +169,10 @@ export class ServerLinkManager {
       // Verify the stored credentials before reporting success.
       const verify = new Client({ name: SERVER_NAME, version: SERVER_VERSION });
       await verify.connect(
-        new StreamableHTTPClientTransport(new URL(flow.upstream.url), { authProvider: flow.provider }),
+        new StreamableHTTPClientTransport(new URL(flow.upstream.url), {
+          authProvider: flow.provider,
+          fetch: timedFetch,
+        }),
       );
       await verify.close();
       return { upstream: flow.upstream.name, label: flow.label };

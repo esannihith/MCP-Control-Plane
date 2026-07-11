@@ -1,0 +1,8 @@
+Added notion server, linked a notion account named primary.
+Clicked link for second notion account in same browser so I closed the oauth page and tried again in different browser. Now the dashabord is stuck loading, no auth screen but reqs is shown in Server http logs.
+Removed primary and tried linking again worked.
+
+Issues: 
+- Stuck loading, no redirect to oauth screen might be due to suspended oauth before
+- Oauth screen appears in same tab, should open in new tab
+- If oauth link is copied and opened in new browser, it doesnt work

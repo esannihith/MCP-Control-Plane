@@ -124,14 +124,53 @@ export function createDashboard(deps: DashboardDeps): Router {
 
   router.post("/dashboard/accounts/link", ...guard, async (req, res) => {
     const { upstream, label } = req.body as Record<string, string>;
-    if (!serverLink) return redirectMsg(res, "CP_MASTER_KEY is not set — vault required for OAuth", true);
-    try {
-      const authorizeUrl = await serverLink.begin(upstream, label || "default");
-      res.redirect(authorizeUrl.toString());
-    } catch (error) {
-      const message = error instanceof AlreadyLinkedError ? error.message : `Link failed: ${error instanceof Error ? error.message : error}`;
-      redirectMsg(res, message, !(error instanceof AlreadyLinkedError));
+    if (!serverLink) {
+      res.status(503).send(page("Link failed", `<p class="err">CP_MASTER_KEY is not set — vault required for OAuth.</p>`));
+      return;
     }
+    try {
+      const started = await serverLink.begin(upstream, label || "default");
+      res.redirect(`/dashboard/link/${started.flowId}`);
+    } catch (error) {
+      const isInfo = error instanceof AlreadyLinkedError;
+      const message = isInfo ? error.message : `Link failed: ${error instanceof Error ? error.message : error}`;
+      res
+        .status(isInfo ? 200 : 502)
+        .send(page("Link account", `<p class="${isInfo ? "msg" : "err"}">${esc(message)}</p><p>You can close this tab.</p>`));
+    }
+  });
+
+  // The launch pad opened in a new tab: continue here, or copy the
+  // cross-browser URL to authorize a different vendor account elsewhere.
+  router.get("/dashboard/link/:flowId", sessions.requireSession(), (req, res) => {
+    const flow = serverLink?.getFlow(String(req.params.flowId));
+    if (!flow) {
+      res.status(410).send(page("Link expired", `<p class="err">This link flow expired or was superseded — start again from the dashboard.</p>`));
+      return;
+    }
+    const crossBrowserUrl = `${config.publicUrl}/link/${flow.flowId}`;
+    res.send(
+      page(
+        "Link account",
+        `<h1>Link '${esc(flow.label)}' at '${esc(flow.upstream)}'</h1>
+         <p><a href="${esc(flow.authorizeUrl.toString())}"><button>Continue to ${esc(flow.upstream)} authorization</button></a></p>
+         <p>Linking a <strong>different</strong> vendor account than this browser is logged into? Open this URL in an
+         incognito window or another browser instead — the flow completes there on its own:</p>
+         <p class="keyonce"><code>${esc(crossBrowserUrl)}</code></p>
+         <p>This link is valid for 10 minutes. When done, refresh the dashboard.</p>`,
+      ),
+    );
+  });
+
+  // Session-free by design: this is how a second browser/incognito window
+  // enters a flow that was started from the dashboard.
+  router.get("/link/:flowId", (req, res) => {
+    const flow = serverLink?.getFlow(String(req.params.flowId));
+    if (!flow) {
+      res.status(410).send(page("Link expired", `<p class="err">This link flow expired or was superseded — start again from the dashboard.</p>`));
+      return;
+    }
+    res.redirect(flow.authorizeUrl.toString());
   });
 
   router.post("/dashboard/accounts/unlink", ...guard, (req, res) => {
@@ -259,7 +298,7 @@ function overview(deps: DashboardDeps, csrf: string, req: Request): string {
         .join("<br>");
       const linkForm =
         u.auth_mode === "oauth"
-          ? `<form class="inline" method="post" action="/dashboard/accounts/link">${hidden}<input type="hidden" name="upstream" value="${esc(u.name)}"><input name="label" placeholder="label (e.g. you@x.com)" size="18"><button>link account</button></form>`
+          ? `<form class="inline" method="post" action="/dashboard/accounts/link" target="_blank">${hidden}<input type="hidden" name="upstream" value="${esc(u.name)}"><input name="label" placeholder="label (e.g. you@x.com)" size="18"><button>link account</button></form>`
           : "";
       return `<tr>
         <td><strong>${esc(u.name)}</strong><br><code>${esc(u.url)}</code></td>
