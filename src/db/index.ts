@@ -156,6 +156,40 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE api_keys ADD COLUMN oauth_client_id TEXT;
     `,
   },
+  {
+    id: 8,
+    // Multi-tenancy foundation. user_id is NULL on pre-SaaS rows until the
+    // owner (CP_OWNER_EMAIL) signs in and claims them. Sessions are DB-backed
+    // (hashed ids) so deploys don't log everyone out.
+    sql: `
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        google_sub TEXT NOT NULL UNIQUE,
+        email TEXT NOT NULL UNIQUE,
+        name TEXT,
+        avatar_url TEXT,
+        slug TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_login_at TEXT
+      );
+      CREATE TABLE user_sessions (
+        id_hash TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        csrf TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_user_sessions_user ON user_sessions(user_id);
+      ALTER TABLE upstreams ADD COLUMN user_id INTEGER REFERENCES users(id);
+      ALTER TABLE api_keys ADD COLUMN user_id INTEGER REFERENCES users(id);
+      ALTER TABLE profiles ADD COLUMN user_id INTEGER REFERENCES users(id);
+      ALTER TABLE audit_log ADD COLUMN user_id INTEGER;
+      CREATE INDEX idx_upstreams_user ON upstreams(user_id);
+      CREATE INDEX idx_api_keys_user ON api_keys(user_id);
+      CREATE INDEX idx_profiles_user ON profiles(user_id);
+      CREATE INDEX idx_audit_user ON audit_log(user_id);
+    `,
+  },
 ];
 
 export type Db = Database.Database;

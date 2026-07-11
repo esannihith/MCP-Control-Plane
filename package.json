@@ -14,7 +14,10 @@
     "account": "tsx scripts/account.ts",
     "owner": "tsx scripts/owner.ts",
     "profile": "tsx scripts/profile.ts",
-    "audit": "tsx scripts/audit.ts"
+    "audit": "tsx scripts/audit.ts",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
+    "web:typecheck": "npm --prefix web run typecheck"
   },
   "keywords": [],
   "author": "",
@@ -25,6 +28,7 @@
     "better-sqlite3": "^12.11.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "jose": "^6.2.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {

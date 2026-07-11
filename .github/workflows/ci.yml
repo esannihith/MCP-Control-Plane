@@ -16,9 +16,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm --prefix web ci
       - run: npx tsc --noEmit
+      - run: npm --prefix web run typecheck
       - run: npm test
       - run: npm run build
+      - run: npm --prefix web run build
 
   docker:
     runs-on: ubuntu-latest

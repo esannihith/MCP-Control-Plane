@@ -1,4 +1,7 @@
 import express from "express";
+import { createApi } from "./api/router.js";
+import { createGoogleAuth } from "./auth/google.js";
+import { UserSessionStore } from "./auth/userSessions.js";
 import { createAuthServer } from "./authserver/router.js";
 import { hasOwnerPassword, setOwnerPassword } from "./authserver/owner.js";
 import type { Config } from "./config.js";
@@ -6,6 +9,8 @@ import { createDashboard } from "./dashboard/router.js";
 import { openDb, type Db } from "./db/index.js";
 import { getRegistryVersion } from "./db/settings.js";
 import { createGateway, type Gateway } from "./gateway/router.js";
+import { rateLimit, securityHeaders } from "./http/security.js";
+import { createSpa } from "./http/spa.js";
 import { UpstreamManager } from "./upstream/manager.js";
 import { Vault } from "./vault/index.js";
 import { SERVER_NAME, SERVER_VERSION } from "./version.js";
@@ -56,17 +61,44 @@ export async function buildApp(config: Config): Promise<App> {
     resourceMetadataUrl: `${config.publicUrl}/.well-known/oauth-protected-resource/mcp`,
   });
 
+  const isHttps = config.publicUrl.startsWith("https:");
+  const userSessions = new UserSessionStore(db, isHttps);
+
   const app = express();
   // Behind a tunnel/reverse proxy (ngrok, cloudflared) X-Forwarded-For must be
   // trusted or the auth endpoints' rate limiter rejects requests. Trust exactly
   // one hop — `true` would let any caller spoof their IP past rate limiting.
   app.set("trust proxy", 1);
-  app.use(cors);
+  app.use(securityHeaders(isHttps));
+  // CORS is for MCP + OAuth endpoints; the cookie-authenticated app/API stays same-origin.
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api") || req.path.startsWith("/app") || req.path.startsWith("/auth/")) {
+      next();
+      return;
+    }
+    cors(req, res, next);
+  });
   app.use(express.json({ limit: "4mb" }));
 
   app.get("/healthz", (_req, res) => {
     res.json({ status: "ok", server: SERVER_NAME, version: SERVER_VERSION });
   });
+
+  // Browsers landing on the origin root go to the app; MCP clients (POST, or
+  // GET with an MCP session) fall through to the gateway's root alias.
+  app.get("/", (req, res, next) => {
+    if (!req.headers["mcp-session-id"] && req.accepts(["html", "json"]) === "html") {
+      res.redirect("/app");
+      return;
+    }
+    next();
+  });
+
+  app.use("/auth/", rateLimit({ windowMs: 60_000, max: 20 }));
+  app.use("/dashboard/login", rateLimit({ windowMs: 60_000, max: 10 }));
+  app.use(createGoogleAuth(db, config, userSessions));
+  app.use(createApi({ db, sessions: userSessions }));
+  app.use(createSpa());
 
   app.use(authServer.router);
   app.use(createDashboard({ db, vault, manager, config }));

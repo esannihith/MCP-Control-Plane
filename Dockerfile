@@ -1,4 +1,4 @@
-# --- build stage ---
+# --- backend build ---
 FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -8,7 +8,15 @@ COPY src ./src
 COPY scripts ./scripts
 RUN npm run build && npm prune --omit=dev
 
-# --- runtime stage ---
+# --- frontend build ---
+FROM node:22-slim AS webbuild
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web ./
+RUN npm run build
+
+# --- runtime ---
 FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -16,6 +24,7 @@ ENV NODE_ENV=production \
     CP_DB_PATH=/data/control-plane.db
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=webbuild /web/dist ./web/dist
 COPY package.json ./
 # Persistent data lives in /data — mount it (compose: ./data:/data; Railway:
 # attach a Volume at /data). Railway forbids the VOLUME instruction itself.
