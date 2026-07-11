@@ -4,7 +4,7 @@ The dashboard covers everything a remote deploy needs (upstreams, account linkin
 
 ## Railway
 
-1. Push this repo to GitHub and create a Railway project from it. Railway auto-detects the `Dockerfile`.
+1. Push this repo to GitHub and create a Railway project from it. [railway.json](railway.json) pins the Dockerfile builder, the `/healthz` healthcheck, and the restart policy.
 2. **Add a volume** mounted at `/data` (Service → Settings → Volumes). Without it the SQLite database — including your encrypted tokens — is wiped on every deploy.
 3. **Generate a domain** (Settings → Networking → Generate Domain), then set the service variables:
 

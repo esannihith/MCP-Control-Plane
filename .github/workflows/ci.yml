@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t mcp-control-plane:ci .
+      - name: Container boots and reports healthy
+        run: |
+          docker run -d --name cp -p 8720:8720 \
+            -e CP_MASTER_KEY=$(openssl rand -base64 32) \
+            -e CP_OWNER_PASSWORD=ci-password \
+            -e CP_PUBLIC_URL=http://127.0.0.1:8720 \
+            mcp-control-plane:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8720/healthz; then exit 0; fi
+            sleep 1
+          done
+          echo "healthcheck never passed"; docker logs cp; exit 1
