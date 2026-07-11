@@ -17,7 +17,8 @@ ENV NODE_ENV=production \
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
-VOLUME /data
+# Persistent data lives in /data — mount it (compose: ./data:/data; Railway:
+# attach a Volume at /data). Railway forbids the VOLUME instruction itself.
 EXPOSE 8720
 # CLI inside the container: node dist/scripts/key.js list   (etc.)
 CMD ["node", "dist/src/index.js"]
