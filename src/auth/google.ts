@@ -3,7 +3,7 @@ import { Router } from "express";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { Config, GoogleEndpointsConfig } from "../config.js";
 import type { Db } from "../db/index.js";
-import { claimLegacyData, upsertGoogleUser } from "./users.js";
+import { upsertGoogleUser } from "./users.js";
 import type { UserSessionStore } from "./userSessions.js";
 
 const GOOGLE_DEFAULTS: GoogleEndpointsConfig = {
@@ -24,10 +24,10 @@ export function createGoogleAuth(db: Db, config: Config, sessions: UserSessionSt
   const endpoints = config.googleEndpoints ?? GOOGLE_DEFAULTS;
   const jwks = createRemoteJWKSet(new URL(endpoints.jwksUri));
   const redirectUrl = `${config.publicUrl}/auth/google/callback`;
-  const pending = new Map<string, { nonce: string; createdAt: number }>();
+  const pending = new Map<string, { nonce: string; next: string; createdAt: number }>();
   const router = Router();
 
-  router.get("/auth/google", (_req, res) => {
+  router.get("/auth/google", (req, res) => {
     if (!config.googleClientId || !config.googleClientSecret) {
       res.status(503).send("Google sign-in is not configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.");
       return;
@@ -35,9 +35,12 @@ export function createGoogleAuth(db: Db, config: Config, sessions: UserSessionSt
     for (const [key, value] of pending) {
       if (Date.now() - value.createdAt > STATE_TTL_MS) pending.delete(key);
     }
+    // Same-origin relative paths only — anything else invites open redirects.
+    const rawNext = String(req.query.next ?? "");
+    const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/app";
     const state = randomBytes(16).toString("base64url");
     const nonce = randomBytes(16).toString("base64url");
-    pending.set(state, { nonce, createdAt: Date.now() });
+    pending.set(state, { nonce, next, createdAt: Date.now() });
     const url = new URL(endpoints.authorizationEndpoint);
     url.searchParams.set("client_id", config.googleClientId);
     url.searchParams.set("redirect_uri", redirectUrl);
@@ -87,9 +90,8 @@ export function createGoogleAuth(db: Db, config: Config, sessions: UserSessionSt
         name: typeof payload.name === "string" ? payload.name : undefined,
         picture: typeof payload.picture === "string" ? payload.picture : undefined,
       });
-      claimLegacyData(db, user, config.ownerEmail);
       sessions.create(res, user.id);
-      res.redirect("/app");
+      res.redirect(flow.next);
     } catch (verifyError) {
       res
         .status(401)

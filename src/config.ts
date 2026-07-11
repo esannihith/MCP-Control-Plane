@@ -20,13 +20,9 @@ export interface Config {
   masterKey?: string;
   /** How often to check for catalog changes (made by CLI processes) to broadcast tools/list_changed. */
   registryPollMs: number;
-  /** Bootstrap owner password: applied at startup if none is set (fresh remote deploys). */
-  ownerPassword?: string;
   /** Google OAuth client for SaaS sign-in. */
   googleClientId?: string;
   googleClientSecret?: string;
-  /** The Google account that claims pre-SaaS (single-tenant) data on first sign-in. */
-  ownerEmail?: string;
   /** Test override: point the Google OIDC flow at a mock. */
   googleEndpoints?: GoogleEndpointsConfig;
 }
@@ -40,10 +36,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     publicUrl: overrides.publicUrl ?? process.env.CP_PUBLIC_URL ?? `http://localhost:${port}`,
     masterKey: overrides.masterKey ?? process.env.CP_MASTER_KEY,
     registryPollMs: overrides.registryPollMs ?? Number(process.env.CP_REGISTRY_POLL_MS ?? 5000),
-    ownerPassword: overrides.ownerPassword ?? process.env.CP_OWNER_PASSWORD,
     googleClientId: overrides.googleClientId ?? process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: overrides.googleClientSecret ?? process.env.GOOGLE_CLIENT_SECRET,
-    ownerEmail: overrides.ownerEmail ?? process.env.CP_OWNER_EMAIL,
     googleEndpoints: overrides.googleEndpoints,
   };
 }

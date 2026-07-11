@@ -6,7 +6,6 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { InvalidGrantError, InvalidRequestError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { Db } from "../db/index.js";
-import { verifyOwnerPassword } from "./owner.js";
 
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -69,8 +68,8 @@ export class ControlPlaneAuthProvider implements OAuthServerProvider {
     return flow;
   }
 
-  /** Consent decision → the redirect URL to send the user's browser to. */
-  completeFlow(flowId: string, decision: { approve: boolean; password: string }): URL {
+  /** Consent decision by a signed-in user → the redirect URL for their browser. */
+  completeFlow(flowId: string, decision: { approve: boolean; userId: number }): URL {
     const flow = this.getFlow(flowId);
     if (!flow) throw new Error("Unknown or expired consent flow — restart authorization from your client");
     const redirect = new URL(flow.params.redirectUri);
@@ -82,12 +81,9 @@ export class ControlPlaneAuthProvider implements OAuthServerProvider {
       return redirect;
     }
 
-    if (!verifyOwnerPassword(this.db, decision.password)) {
-      throw new InvalidPasswordError();
-    }
     this.flows.delete(flowId);
 
-    const keyId = this.connectionForClient(flow.client);
+    const keyId = this.connectionForClient(flow.client, decision.userId);
 
     const code = `ac_${randomBytes(24).toString("hex")}`;
     this.db
@@ -111,14 +107,14 @@ export class ControlPlaneAuthProvider implements OAuthServerProvider {
   }
 
   /**
-   * Re-authorizations from the same registered client reuse its connection
-   * row, so bindings and profile assignments survive token-refresh failures
-   * and connector re-auth. Fresh clients get a readable unique name.
+   * Re-authorizations from the same registered client (by the same user)
+   * reuse its connection row, so bindings and profile assignments survive
+   * token-refresh failures and connector re-auth.
    */
-  private connectionForClient(client: OAuthClientInformationFull): number {
+  private connectionForClient(client: OAuthClientInformationFull, userId: number): number {
     const existing = this.db
-      .prepare("SELECT id FROM api_keys WHERE oauth_client_id = ? AND revoked_at IS NULL")
-      .get(client.client_id) as { id: number } | undefined;
+      .prepare("SELECT id FROM api_keys WHERE oauth_client_id = ? AND user_id = ? AND revoked_at IS NULL")
+      .get(client.client_id, userId) as { id: number } | undefined;
     if (existing) return existing.id;
 
     const base = `oauth:${(client.client_name ?? client.client_id).slice(0, 40)}`;
@@ -129,8 +125,8 @@ export class ControlPlaneAuthProvider implements OAuthServerProvider {
     // Random hash: this connection row can never be used as a header API key.
     return Number(
       this.db
-        .prepare("INSERT INTO api_keys (name, key_hash, oauth_client_id) VALUES (?, ?, ?)")
-        .run(name, sha256(randomBytes(32).toString("hex")), client.client_id).lastInsertRowid,
+        .prepare("INSERT INTO api_keys (name, key_hash, oauth_client_id, user_id) VALUES (?, ?, ?, ?)")
+        .run(name, sha256(randomBytes(32).toString("hex")), client.client_id, userId).lastInsertRowid,
     );
   }
 
@@ -220,8 +216,3 @@ export class ControlPlaneAuthProvider implements OAuthServerProvider {
   }
 }
 
-export class InvalidPasswordError extends Error {
-  constructor() {
-    super("Incorrect password");
-  }
-}

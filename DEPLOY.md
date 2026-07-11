@@ -10,11 +10,12 @@ The dashboard covers everything a remote deploy needs (upstreams, account linkin
 
    | Variable | Value |
    |---|---|
-   | `CP_MASTER_KEY` | generate locally: `npm run key -- master` |
-   | `CP_OWNER_PASSWORD` | dashboard + consent-screen password (applied only on first boot) |
    | `CP_PUBLIC_URL` | `https://<your-domain>` — exactly, no trailing slash |
+   | `CP_MASTER_KEY` | generate locally: `npm run key -- master` |
+   | `GOOGLE_CLIENT_ID` | Google OAuth client (console.cloud.google.com → Credentials → OAuth client, Web application) |
+   | `GOOGLE_CLIENT_SECRET` | from the same OAuth client |
 
-   `PORT` is injected by Railway automatically; the Dockerfile already sets `CP_HOST=0.0.0.0` and `CP_DB_PATH=/data/control-plane.db`.
+   The Google client's authorized redirect URI must be `https://<your-domain>/auth/google/callback`. `PORT` is injected by Railway automatically; the Dockerfile already sets `CP_HOST=0.0.0.0` and `CP_DB_PATH=/data/control-plane.db`. All four variables are required — production boots refuse to start without them.
 4. Deploy. Then open `https://<domain>/dashboard`:
    - add upstream vendors (auth mode `oauth` for Notion/Linear/GitHub-style remote MCPs),
    - **link accounts in the browser** — the flow redirects through the vendor and back to `/upstream-callback` (to link a second vendor account, log out at the vendor first or complete the flow in an incognito window),

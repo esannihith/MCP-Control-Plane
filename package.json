@@ -12,7 +12,6 @@
     "key": "tsx scripts/key.ts",
     "upstream": "tsx scripts/upstream.ts",
     "account": "tsx scripts/account.ts",
-    "owner": "tsx scripts/owner.ts",
     "profile": "tsx scripts/profile.ts",
     "audit": "tsx scripts/audit.ts",
     "web:dev": "npm --prefix web run dev",

@@ -17,8 +17,8 @@ switch (command) {
     const bearerIndex = args.indexOf("--bearer");
     let bearer = bearerIndex >= 0 ? args[bearerIndex + 1] : undefined;
     const oauth = args.includes("--oauth");
+    if (bearer && !vault) usage("--bearer requires CP_MASTER_KEY (generate: npm run key -- master)");
     if (bearer && vault) bearer = vault.encrypt(bearer);
-    else if (bearer) console.warn("WARNING: CP_MASTER_KEY not set — bearer token stored UNENCRYPTED.");
     addUpstream(db, name, url, { bearerToken: bearer, oauth });
     if (oauth) {
       console.log(`Upstream '${name}' registered (${url}, OAuth).`);

@@ -160,7 +160,7 @@ export class ServerLinkManager {
   async complete(flowId: string, code: string): Promise<{ upstream: string; label: string }> {
     const flow = this.flows.get(flowId);
     if (!flow || Date.now() - flow.createdAt > FLOW_TTL_MS) {
-      throw new Error("Unknown or expired link flow — start again from the dashboard");
+      throw new Error("Unknown or expired link flow — start again from the app");
     }
     this.flows.delete(flowId);
     try {

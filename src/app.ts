@@ -1,11 +1,11 @@
 import express from "express";
+import { createLinkRoutes } from "./accounts/linkRoutes.js";
+import { ServerLinkManager } from "./accounts/serverLink.js";
 import { createApi } from "./api/router.js";
 import { createGoogleAuth } from "./auth/google.js";
 import { UserSessionStore } from "./auth/userSessions.js";
 import { createAuthServer } from "./authserver/router.js";
-import { hasOwnerPassword, setOwnerPassword } from "./authserver/owner.js";
 import type { Config } from "./config.js";
-import { createDashboard } from "./dashboard/router.js";
 import { openDb, type Db } from "./db/index.js";
 import { getRegistryVersion } from "./db/settings.js";
 import { createGateway, type Gateway } from "./gateway/router.js";
@@ -34,35 +34,24 @@ export interface App {
   gateway: Gateway;
   manager: UpstreamManager;
   vault: Vault | null;
+  serverLink: ServerLinkManager | null;
   close(): Promise<void>;
-}
-
-/** Encrypts any plaintext bearer tokens left from before the vault existed. */
-function encryptPlaintextBearerTokens(db: Db, vault: Vault): void {
-  const rows = db
-    .prepare("SELECT id, bearer_token FROM upstreams WHERE bearer_token IS NOT NULL")
-    .all() as { id: number; bearer_token: string }[];
-  const update = db.prepare("UPDATE upstreams SET bearer_token = ? WHERE id = ?");
-  for (const row of rows) {
-    if (!Vault.isEncrypted(row.bearer_token)) update.run(vault.encrypt(row.bearer_token), row.id);
-  }
 }
 
 export async function buildApp(config: Config): Promise<App> {
   const db = openDb(config.dbPath);
   const vault = config.masterKey ? new Vault(config.masterKey) : null;
-  if (vault) encryptPlaintextBearerTokens(db, vault);
-  if (config.ownerPassword && !hasOwnerPassword(db)) setOwnerPassword(db, config.ownerPassword);
   const manager = new UpstreamManager(db, vault);
   await manager.start();
-  const authServer = createAuthServer(db, config);
+  const serverLink = vault ? new ServerLinkManager(db, vault, config.publicUrl) : null;
+
+  const isHttps = config.publicUrl.startsWith("https:");
+  const userSessions = new UserSessionStore(db, isHttps);
+  const authServer = createAuthServer(db, config, userSessions);
   const gateway = createGateway(db, manager, {
     tokenVerifier: authServer.provider,
     resourceMetadataUrl: `${config.publicUrl}/.well-known/oauth-protected-resource/mcp`,
   });
-
-  const isHttps = config.publicUrl.startsWith("https:");
-  const userSessions = new UserSessionStore(db, isHttps);
 
   const app = express();
   // Behind a tunnel/reverse proxy (ngrok, cloudflared) X-Forwarded-For must be
@@ -95,13 +84,13 @@ export async function buildApp(config: Config): Promise<App> {
   });
 
   app.use("/auth/", rateLimit({ windowMs: 60_000, max: 20 }));
-  app.use("/dashboard/login", rateLimit({ windowMs: 60_000, max: 10 }));
+  app.use("/link/", rateLimit({ windowMs: 60_000, max: 30 }));
   app.use(createGoogleAuth(db, config, userSessions));
   app.use(createApi({ db, sessions: userSessions }));
   app.use(createSpa());
 
   app.use(authServer.router);
-  app.use(createDashboard({ db, vault, manager, config }));
+  app.use(createLinkRoutes(serverLink, manager));
   app.use(gateway.router);
 
   // Catalog changes bump registry_version — including from CLI processes that
@@ -126,6 +115,7 @@ export async function buildApp(config: Config): Promise<App> {
     gateway,
     manager,
     vault,
+    serverLink,
     async close() {
       clearInterval(registryWatcher);
       await gateway.close();

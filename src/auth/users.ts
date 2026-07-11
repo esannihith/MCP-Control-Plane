@@ -66,20 +66,3 @@ export function getUserById(db: Db, id: number): User | null {
   const row = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
   return row ? toUser(row) : null;
 }
-
-/**
- * Pre-SaaS rows have user_id NULL. The configured owner adopts them all on
- * first sign-in, so an existing single-tenant deployment keeps working with
- * its data under the owner's new account.
- */
-export function claimLegacyData(db: Db, user: User, ownerEmail: string | undefined): boolean {
-  if (!ownerEmail || user.email.toLowerCase() !== ownerEmail.toLowerCase()) return false;
-  const claim = db.transaction(() => {
-    let changes = 0;
-    for (const table of ["upstreams", "api_keys", "profiles", "audit_log"]) {
-      changes += db.prepare(`UPDATE ${table} SET user_id = ? WHERE user_id IS NULL`).run(user.id).changes;
-    }
-    return changes;
-  });
-  return claim() > 0;
-}
